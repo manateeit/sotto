@@ -3,8 +3,8 @@ import ApplicationServices
 import AVFoundation
 import Foundation
 
-/// Menu-bar-only orchestrator for the whole M0 loop:
-/// hotkey → record → SpeechAnalyzer → post-process → paste.
+/// Menu-bar-only orchestrator for the dictation loop:
+/// hotkey (push-to-talk or toggle) → record + HUD → SpeechAnalyzer → paste.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkey = HotkeyManager()
@@ -12,12 +12,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let engine: TranscriptionEngine = SpeechAnalyzerEngine()
     private let postProcessor: PostProcessor = Passthrough()
     private let injector = OutputInjector()
+    private let hud = HUDController()
+    private let sounds = Sounds()
+    private var gesture = HotkeyGesture()
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
 
-    private var isRecording = false
-    private var isBusy = false
+    /// Lifecycle of one dictation. `starting` covers the async engine/mic spin-up
+    /// so a stop or cancel arriving during it can be honored.
+    private enum Phase {
+        case idle
+        case starting
+        case recording
+        case finishing
+    }
+    private var phase: Phase = .idle
+    private var cancelRequestedDuringStart = false
+    private var hudDismissWork: DispatchWorkItem?
+    private var escMonitor: Any?
+
+    private var isActive: Bool { phase == .starting || phase == .recording }
 
     // MARK: NSApplicationDelegate
 
@@ -27,8 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         promptForAccessibilityTrust()
 
         // hotKeyHandler dispatches to main, so assuming main isolation here is safe.
-        hotkey.onToggle = { [weak self] in
-            MainActor.assumeIsolated { self?.toggle() }
+        hotkey.onKeyDown = { [weak self] in
+            MainActor.assumeIsolated { self?.handleKeyDown() }
+        }
+        hotkey.onKeyUp = { [weak self] in
+            MainActor.assumeIsolated { self?.handleKeyUp() }
         }
         hotkey.register()
 
@@ -46,7 +64,205 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.unregister()
+        removeEscMonitor()
         recorder.stop()
+    }
+
+    // MARK: Hotkey → intent
+
+    private func handleKeyDown() {
+        apply(gesture.keyDown(at: now, isRecording: isActive))
+    }
+
+    private func handleKeyUp() {
+        apply(gesture.keyUp(at: now, isRecording: isActive))
+    }
+
+    private func apply(_ intent: HotkeyGesture.Intent) {
+        switch intent {
+        case .start: startRecording()
+        case .stop: stopAndTranscribe()
+        case .none: break
+        }
+    }
+
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    // MARK: Dictation loop
+
+    private func startRecording() {
+        guard phase == .idle else { return }
+        guard ensureMicrophoneAuthorized() else { return }
+
+        phase = .starting
+        cancelRequestedDuringStart = false
+        cancelHUDDismiss()
+
+        sounds.play(.start)
+        hud.show(.recording)
+        setRecordingIcon(true)
+        setStatus("Listening… (⌥Space or hold)")
+        installEscMonitor()
+
+        Task { @MainActor in
+            do {
+                try await engine.beginSession()
+                recorder.onBuffer = { [engine] buffer in engine.append(buffer) }
+                recorder.onLevel = { [weak self] level in
+                    Task { @MainActor in self?.hud.model.pushLevel(level) }
+                }
+                try recorder.start()
+
+                if cancelRequestedDuringStart {
+                    performCancel(playSound: false)
+                    return
+                }
+                phase = .recording
+            } catch {
+                teardownAudioCallbacks()
+                removeEscMonitor()
+                await engine.cancelSession()
+                phase = .idle
+                sounds.play(.cancel)
+                showError("Couldn't start recording")
+            }
+        }
+    }
+
+    private func stopAndTranscribe() {
+        switch phase {
+        case .starting:
+            // Stop before spin-up finished; nothing captured yet — treat as cancel.
+            cancelRequestedDuringStart = true
+        case .recording:
+            finishRecording()
+        case .idle, .finishing:
+            break
+        }
+    }
+
+    private func finishRecording() {
+        phase = .finishing
+        teardownAudioCallbacks()
+        recorder.stop()
+        removeEscMonitor()
+        sounds.play(.stop)
+        hud.update(.transcribing)
+        setRecordingIcon(false)
+        setStatus("Transcribing…")
+
+        Task { @MainActor in
+            defer { phase = .idle }
+            do {
+                let raw = try await engine.finishSession()
+                let text = try await postProcessor.process(raw)
+                guard !text.isEmpty else {
+                    setStatus("No speech detected.")
+                    hud.hide()
+                    return
+                }
+                switch injector.inject(text) {
+                case .pasted:
+                    setStatus("Pasted \(text.count) chars.")
+                    flashDoneThenHide()
+                case .refusedSecureInput:
+                    NSLog("Sotto: secure input active — left transcript on clipboard.")
+                    setStatus("Secure field — copied to clipboard.")
+                    flashDoneThenHide()
+                case .empty:
+                    setStatus("No speech detected.")
+                    hud.hide()
+                }
+            } catch {
+                setStatus("Transcription failed: \(error)")
+                showError("Transcription failed")
+            }
+        }
+    }
+
+    /// Briefly show the green "done" dot, then dismiss the HUD.
+    private func flashDoneThenHide() {
+        hud.update(.done)
+        scheduleHUDDismiss(after: 0.6)
+    }
+
+    private func cancelDictation() {
+        switch phase {
+        case .starting:
+            cancelRequestedDuringStart = true
+        case .recording:
+            performCancel(playSound: true)
+        case .idle, .finishing:
+            break
+        }
+    }
+
+    /// Discard the in-flight dictation without transcribing or pasting.
+    private func performCancel(playSound: Bool) {
+        phase = .finishing
+        teardownAudioCallbacks()
+        recorder.stop()
+        removeEscMonitor()
+        if playSound { sounds.play(.cancel) }
+        setRecordingIcon(false)
+        setStatus("Cancelled.")
+        hud.hide()
+
+        Task { @MainActor in
+            await engine.cancelSession()
+            phase = .idle
+        }
+    }
+
+    private func teardownAudioCallbacks() {
+        recorder.onBuffer = nil
+        recorder.onLevel = nil
+    }
+
+    // MARK: Error surfacing + HUD dismissal
+
+    private func showError(_ message: String) {
+        hud.show(.error(message))
+        scheduleHUDDismiss(after: 3)
+    }
+
+    private func scheduleHUDDismiss(after seconds: TimeInterval) {
+        hudDismissWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.hud.hide() }
+        hudDismissWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    private func cancelHUDDismiss() {
+        hudDismissWork?.cancel()
+        hudDismissWork = nil
+    }
+
+    // MARK: Esc-to-cancel (passive global monitor)
+
+    /// Observe Esc while recording via a *passive* global monitor — it never
+    /// consumes the key, so Esc still works in the target app; it just also
+    /// cancels our dictation. Requires Accessibility trust (which we already need
+    /// for paste); degrade gracefully without it.
+    private func installEscMonitor() {
+        guard escMonitor == nil else { return }
+        guard AXIsProcessTrusted() else {
+            NSLog("Sotto: Esc-to-cancel unavailable — grant Accessibility trust.")
+            return
+        }
+        escMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return } // 53 = Escape
+            // Hop to main explicitly (like the Carbon path) so assumeIsolated can't
+            // trap if AppKit ever delivers this off the main thread.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.cancelDictation() }
+            }
+        }
+    }
+
+    private func removeEscMonitor() {
+        if let escMonitor { NSEvent.removeMonitor(escMonitor) }
+        escMonitor = nil
     }
 
     // MARK: Menu bar
@@ -56,7 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Sotto")
             button.image?.isTemplate = true
-            button.toolTip = "Sotto — ⌥Space to dictate"
+            button.toolTip = "Sotto — ⌥Space to dictate (tap = toggle, hold = push-to-talk)"
         }
 
         let menu = NSMenu()
@@ -73,7 +289,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem = status
     }
 
-    @MainActor
     private func setStatus(_ text: String) {
         statusMenuItem?.title = text
     }
@@ -85,72 +300,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.image?.isTemplate = true
     }
 
-    // MARK: Dictation loop
-
-    private func toggle() {
-        if isRecording {
-            stopAndTranscribe()
-        } else {
-            startRecording()
-        }
-    }
-
-    private func startRecording() {
-        guard !isRecording, !isBusy else { return }
-        isBusy = true
-
-        Task { @MainActor in
-            do {
-                try await engine.beginSession()
-                recorder.onBuffer = { [engine] buffer in engine.append(buffer) }
-                try recorder.start()
-                isRecording = true
-                setRecordingIcon(true)
-                setStatus("Recording… (⌥Space to stop)")
-            } catch {
-                setStatus("Couldn't start: \(error)")
-                await engine.cancelSession()
-            }
-            isBusy = false
-        }
-    }
-
-    private func stopAndTranscribe() {
-        guard isRecording, !isBusy else { return }
-        isBusy = true
-        isRecording = false
-
-        recorder.stop()
-        recorder.onBuffer = nil
-        setRecordingIcon(false)
-        setStatus("Transcribing…")
-
-        Task { @MainActor in
-            do {
-                let raw = try await engine.finishSession()
-                let text = try await postProcessor.process(raw)
-                guard !text.isEmpty else {
-                    setStatus("No speech detected.")
-                    isBusy = false
-                    return
-                }
-                switch injector.inject(text) {
-                case .pasted:
-                    setStatus("Pasted \(text.count) chars.")
-                case .refusedSecureInput:
-                    NSLog("Sotto: secure input active — left transcript on clipboard.")
-                    setStatus("Secure field — copied to clipboard instead.")
-                case .empty:
-                    setStatus("No speech detected.")
-                }
-            } catch {
-                setStatus("Transcription failed: \(error)")
-            }
-            isBusy = false
-        }
-    }
-
     // MARK: Permissions
+
+    private func ensureMicrophoneAuthorized() -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+            showError("Grant microphone access, then try again")
+            return false
+        default:
+            showError("Microphone access denied")
+            return false
+        }
+    }
 
     private func requestMicrophoneAccess() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {

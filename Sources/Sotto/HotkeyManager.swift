@@ -2,30 +2,35 @@ import AppKit
 import Carbon.HIToolbox
 
 /// Global hotkey via Carbon `RegisterEventHotKey` — works system-wide with **no**
-/// Input Monitoring permission (DESIGN.md §2, §4). M0 is toggle-only: each press
-/// fires `onToggle`. Push-to-talk (down/up) is M1.
+/// Input Monitoring permission (DESIGN.md §2, §4).
+///
+/// Delivers the key's down *and* up so the caller can distinguish push-to-talk
+/// from toggle (M1). Esc-to-cancel is handled separately in AppDelegate via a
+/// passive `NSEvent` global monitor, so we don't register Esc as a hotkey (which
+/// would swallow it from every other app).
 ///
 // ponytail: hardcoded ⌥+Space. M3 adds a settings hotkey recorder that
 // re-registers on change; the Carbon plumbing here stays the same.
 final class HotkeyManager {
-    var onToggle: (() -> Void)?
+    var onKeyDown: (() -> Void)?
+    var onKeyUp: (() -> Void)?
 
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private let signature: OSType = 0x534F_5454 // 'SOTT'
 
     func register() {
-        // Install the handler that Carbon calls when the hotkey fires.
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        // Handle both key-down and key-up for the hotkey.
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         let installStatus = InstallEventHandler(
             GetApplicationEventTarget(),
             hotKeyHandler,
-            1,
-            &eventType,
+            specs.count,
+            &specs,
             selfPtr,
             &handlerRef
         )
@@ -54,19 +59,25 @@ final class HotkeyManager {
         handlerRef = nil
     }
 
-    fileprivate func fire() {
-        onToggle?()
+    fileprivate func handle(kind: UInt32) {
+        if kind == UInt32(kEventHotKeyPressed) {
+            onKeyDown?()
+        } else if kind == UInt32(kEventHotKeyReleased) {
+            onKeyUp?()
+        }
     }
 }
 
-/// C callback trampoline. Bounces to the main thread and into the owning manager.
+/// C callback trampoline. Reads whether the event was a press or a release, then
+/// bounces to the main thread.
 private func hotKeyHandler(
     _ nextHandler: EventHandlerCallRef?,
     _ event: EventRef?,
     _ userData: UnsafeMutableRawPointer?
 ) -> OSStatus {
-    guard let userData else { return OSStatus(eventNotHandledErr) }
+    guard let userData, let event else { return OSStatus(eventNotHandledErr) }
+    let kind = GetEventKind(event)
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-    DispatchQueue.main.async { manager.fire() }
+    DispatchQueue.main.async { manager.handle(kind: kind) }
     return noErr
 }
