@@ -3,3 +3,5 @@
 *.app
 .omc/
 .swiftpm/
+dist/*.dmg
+Assets/AppIcon.iconset/

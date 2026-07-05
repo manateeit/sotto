@@ -19,13 +19,15 @@ cd "$ROOT"
 FW="/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 LIB="/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
 
-if [[ ! -d "$FW/Testing.framework" ]]; then
-  echo "Testing.framework not found under CLT; on a full Xcode toolchain run: swift test" >&2
-  exit 0
+if [[ -d "$FW/Testing.framework" ]]; then
+  exec swift test \
+    -Xswiftc -F -Xswiftc "$FW" \
+    -Xlinker -F -Xlinker "$FW" \
+    -Xlinker -rpath -Xlinker "$FW" \
+    -Xlinker -rpath -Xlinker "$LIB"
 fi
 
-exec swift test \
-  -Xswiftc -F -Xswiftc "$FW" \
-  -Xlinker -F -Xlinker "$FW" \
-  -Xlinker -rpath -Xlinker "$FW" \
-  -Xlinker -rpath -Xlinker "$LIB"
+# Full Xcode toolchain (e.g. CI): Testing.framework is already on the default
+# search path, so the CLT-specific flags above would be redundant. No-op the
+# workaround, not the test run — plain `swift test` finds swift-testing fine.
+exec swift test

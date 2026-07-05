@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: bash scripts/test.sh
+
+      - name: Assemble app bundle
+        run: bash scripts/make-app.sh
+
+      - name: Verify code signature
+        run: codesign --verify --strict dist/Sotto.app

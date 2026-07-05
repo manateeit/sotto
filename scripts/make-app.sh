@@ -11,7 +11,7 @@ cd "$ROOT"
 
 APP_NAME="Sotto"
 BUNDLE_ID="com.chrismckenna.sotto"
-VERSION="0.0.1"
+VERSION="${VERSION:-0.0.1}"
 APP="dist/${APP_NAME}.app"
 
 echo "==> Building release…"
@@ -23,11 +23,18 @@ if [[ ! -f "$BIN_PATH" ]]; then
   exit 1
 fi
 
+ICON="Assets/AppIcon.icns"
+if [[ ! -f "$ICON" ]]; then
+  echo "error: ${ICON} not found — run: swift scripts/make-icon.swift && iconutil -c icns Assets/AppIcon.iconset -o Assets/AppIcon.icns" >&2
+  exit 1
+fi
+
 echo "==> Assembling ${APP}…"
 rm -rf "$APP"
 mkdir -p "${APP}/Contents/MacOS"
 mkdir -p "${APP}/Contents/Resources"
 cp "$BIN_PATH" "${APP}/Contents/MacOS/${APP_NAME}"
+cp "$ICON" "${APP}/Contents/Resources/AppIcon.icns"
 
 cat > "${APP}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +47,8 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
     <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
