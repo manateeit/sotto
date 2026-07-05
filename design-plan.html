@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sotto — Design &amp; MVP Plan</title>
+<style>
+  :root {
+    --bg: #F7F8FA;
+    --surface: #FFFFFF;
+    --ink: #1C2128;
+    --muted: #5B6470;
+    --hairline: #E3E6EB;
+    --accent: #0E7C86;
+    --accent-soft: #E3F0F1;
+    --code-bg: #EFF1F4;
+    --good: #2E7D4F;
+    --cut: #A34A3E;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171C;
+      --surface: #1C2027;
+      --ink: #E8EAEE;
+      --muted: #98A1AD;
+      --hairline: #2A2F38;
+      --accent: #56C8D2;
+      --accent-soft: #1D3236;
+      --code-bg: #21262E;
+      --good: #6FBF8F;
+      --cut: #D68A7E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171C;
+    --surface: #1C2027;
+    --ink: #E8EAEE;
+    --muted: #98A1AD;
+    --hairline: #2A2F38;
+    --accent: #56C8D2;
+    --accent-soft: #1D3236;
+    --code-bg: #21262E;
+    --good: #6FBF8F;
+    --cut: #D68A7E;
+  }
+  :root[data-theme="light"] {
+    --bg: #F7F8FA;
+    --surface: #FFFFFF;
+    --ink: #1C2128;
+    --muted: #5B6470;
+    --hairline: #E3E6EB;
+    --accent: #0E7C86;
+    --accent-soft: #E3F0F1;
+    --code-bg: #EFF1F4;
+    --good: #2E7D4F;
+    --cut: #A34A3E;
+  }
+
+  html { background: var(--bg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 5rem;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* ---------- header ---------- */
+  .eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+  }
+  h1 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(1.9rem, 4.5vw, 2.7rem);
+    font-weight: 750;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin: 0 0 0.6rem;
+  }
+  .subtitle {
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0 0 1.25rem;
+  }
+  .wave {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    margin: 1.4rem 0 1.1rem;
+  }
+  .wave span {
+    width: 4px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0.85;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.6rem;
+    margin-bottom: 2.5rem;
+  }
+  .chip {
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 0.22rem 0.65rem;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .chip.accent { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+  /* ---------- toc ---------- */
+  nav.toc {
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+    padding: 0.8rem 0;
+    margin-bottom: 3rem;
+  }
+  nav.toc ol {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1.4rem;
+    margin: 0;
+    padding: 0;
+  }
+  nav.toc a { color: var(--muted); font-size: 0.86rem; font-weight: 500; }
+  nav.toc a:hover { color: var(--accent); text-decoration: none; }
+  nav.toc .n { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 0.3rem; font-weight: 600; }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 3.2rem; }
+  h2 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+    font-size: 1.42rem;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 1rem;
+    padding-top: 1rem;
+  }
+  h2 .n { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 0.55rem; }
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 650;
+    margin: 1.6rem 0 0.6rem;
+    letter-spacing: -0.005em;
+  }
+  p { max-width: 68ch; margin: 0 0 0.9rem; }
+  ul, ol { max-width: 68ch; padding-left: 1.3rem; margin: 0 0 0.9rem; }
+  li { margin-bottom: 0.35rem; }
+  li::marker { color: var(--muted); }
+  strong { font-weight: 650; }
+  em { color: var(--muted); }
+  .lede { font-size: 1.06rem; }
+
+  code {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+  }
+  .diagram-wrap {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 1.2rem 0;
+  }
+  .diagram-wrap pre {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    padding: 1.2rem 1.4rem;
+    margin: 0;
+    color: var(--ink);
+    white-space: pre;
+  }
+  .diagram-wrap pre b { color: var(--accent); font-weight: 650; }
+
+  /* ---------- principles ---------- */
+  .principles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 0.9rem;
+    margin: 1.2rem 0 0.4rem;
+  }
+  .principle {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+  }
+  .principle .k {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.4rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .principle h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
+  .principle p { font-size: 0.88rem; color: var(--muted); margin: 0; }
+
+  /* ---------- tables ---------- */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    background: var(--surface);
+    margin: 1rem 0 1.4rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th {
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--hairline);
+    vertical-align: top;
+    min-width: 12rem;
+  }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 600; }
+
+  .tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    margin-right: 0.4rem;
+  }
+  .tag.keep { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+  .tag.cut  { color: var(--cut);  background: color-mix(in srgb, var(--cut) 12%, transparent); }
+  .tag.add  { color: var(--accent); background: var(--accent-soft); }
+
+  /* ---------- milestones ---------- */
+  .milestones { display: flex; flex-direction: column; gap: 0.9rem; margin: 1.2rem 0; }
+  .milestone {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 1.05rem 1.2rem;
+  }
+  .milestone .head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.4rem;
+  }
+  .milestone .id {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .milestone h3 { margin: 0; font-size: 1rem; }
+  .milestone p { font-size: 0.92rem; margin: 0 0 0.6rem; color: var(--ink); }
+  .exit {
+    font-size: 0.86rem;
+    color: var(--muted);
+    border-left: 3px solid var(--accent);
+    padding: 0.15rem 0 0.15rem 0.8rem;
+    max-width: 66ch;
+  }
+  .exit b { color: var(--ink); font-weight: 650; }
+
+  .callout {
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 10px;
+    padding: 0.85rem 1.1rem;
+    font-size: 0.92rem;
+    max-width: 68ch;
+    margin: 1rem 0;
+  }
+
+  footer {
+    border-top: 1px solid var(--hairline);
+    margin-top: 3.5rem;
+    padding-top: 1.4rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  footer ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem 1.4rem; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    a { transition: color 120ms ease; }
+  }
+</style>
+
+<div class="page">
+  <header>
+    <p class="eyebrow">whisperclone · design review · draft for review</p>
+    <h1>Sotto — Design &amp; MVP Plan</h1>
+    <p class="subtitle">A native macOS dictation app: press a key, speak, polished text appears in whatever app you're using. Working name from "sotto voce" — speak quietly; trivially renameable.</p>
+    <div class="wave" aria-hidden="true">
+      <span style="height:20%"></span><span style="height:45%"></span><span style="height:75%"></span><span style="height:100%"></span><span style="height:60%"></span><span style="height:85%"></span><span style="height:35%"></span><span style="height:65%"></span><span style="height:90%"></span><span style="height:50%"></span><span style="height:25%"></span><span style="height:55%"></span><span style="height:30%"></span><span style="height:15%"></span>
+    </div>
+    <div class="meta">
+      <span class="chip accent">Open source · MIT</span>
+      <span class="chip">macOS 26+ · Apple Silicon</span>
+      <span class="chip">Swift 6 + SwiftUI</span>
+      <span class="chip">On-device by default</span>
+      <span class="chip">July 5, 2026</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#identity"><span class="n">0</span>Identity</a></li>
+      <li><a href="#scorecard"><span class="n">1</span>Feature scorecard</a></li>
+      <li><a href="#architecture"><span class="n">2</span>Architecture</a></li>
+      <li><a href="#behaviors"><span class="n">3</span>The two behaviors</a></li>
+      <li><a href="#tech"><span class="n">4</span>Tech choices</a></li>
+      <li><a href="#process"><span class="n">5</span>MVP process</a></li>
+      <li><a href="#risks"><span class="n">6</span>Risks</a></li>
+      <li><a href="#roadmap"><span class="n">7</span>Roadmap</a></li>
+    </ol>
+  </nav>
+
+  <section id="identity">
+    <h2><span class="n">0</span>Identity — three principles, in priority order</h2>
+    <div class="principles">
+      <div class="principle">
+        <span class="k">01 · First</span>
+        <h3>Privacy-absolute</h3>
+        <p>Default build makes zero network calls. On-device STT, on-device LLM. No accounts, no telemetry, no update phone-home without consent.</p>
+      </div>
+      <div class="principle">
+        <span class="k">02 · Second</span>
+        <h3>Radically simpler</h3>
+        <p>superwhisper has 7 modes, model pickers, and a settings maze. We ship two behaviors and no mode system. If a user opens settings in the first week, we've failed.</p>
+      </div>
+      <div class="principle">
+        <span class="k">03 · Third</span>
+        <h3>Agentic ceiling</h3>
+        <p>The post-processing seam is designed so voice can eventually <em>act</em> (tool calling, Claude Code integration), not just format. MVP does transforms only; the seam makes actions cheap later.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="scorecard">
+    <h2><span class="n">1</span>Feature scorecard vs superwhisper</h2>
+
+    <h3><span class="tag keep">Clone</span>In the MVP</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>superwhisper feature</th><th>Our version</th></tr></thead>
+        <tbody>
+          <tr><td>Global hotkey → record → paste anywhere</td><td>Same. Push-to-talk <em>and</em> toggle on one key.</td></tr>
+          <tr><td>Floating recording HUD w/ waveform + states</td><td>Same, one compact pill (no mini/maxi dual window).</td></tr>
+          <tr><td>Local transcription (whisper.cpp model zoo)</td><td><strong>Apple SpeechAnalyzer</strong> — zero model downloads, ANE-fast.</td></tr>
+          <tr><td>AI post-processing via cloud LLMs</td><td><strong>Apple Foundation Models</strong> — on-device, free.</td></tr>
+          <tr><td>Modes (Message / Email / Note / Super / Custom…)</td><td><strong>Deleted.</strong> Two auto behaviors: Dictate + Transform (§3).</td></tr>
+          <tr><td>Context awareness (selection / clipboard / app)</td><td>Same three sources, same timing rules. Always on.</td></tr>
+          <tr><td>Custom vocabulary</td><td>Replacement table + prompt-bias in cleanup pass.</td></tr>
+          <tr><td>History + reprocess</td><td>JSONL + audio files, open format. Reprocess post-MVP.</td></tr>
+          <tr><td>Sounds, cancel, Esc, launch-at-login</td><td>Same.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><span class="tag cut">Cut</span>Deliberately — most may never come back</h3>
+    <ul>
+      <li>Mode system, per-mode model/prompt config, auto-activation rules</li>
+      <li>Accounts, billing, Pro tiers, enterprise (SSO / SCIM / MDM)</li>
+      <li>Windows, iOS</li>
+      <li>Meeting recording + speaker diarization <em>(roadmap — FluidAudio ships diarization when we want it)</em></li>
+      <li>File transcription, realtime streaming display <em>(roadmap; SpeechAnalyzer supports streaming, cheap to add)</em></li>
+      <li>Translation</li>
+    </ul>
+
+    <h3><span class="tag add">Add</span>Our differentiators</h3>
+    <ul>
+      <li><strong>Zero-config smart dictation</strong> — context awareness isn't a "Super mode" you configure; it's just how the app works.</li>
+      <li><strong>Open data</strong> — history is JSONL + WAV in Application Support. Grep it, script it, delete it.</li>
+      <li><strong>Agentic seam (post-MVP)</strong> — "voice command" behavior with Foundation Models tool calling; route to Ollama/Claude by user choice. Target use case: driving Claude Code / terminal by voice.</li>
+    </ul>
+  </section>
+
+  <section id="architecture">
+    <h2><span class="n">2</span>Architecture</h2>
+    <div class="diagram-wrap">
+<pre>
+        <b>HotkeyManager</b> (RegisterEventHotKey — no Input Monitoring perm needed)
+              │ down/up (push-to-talk)  or  tap (toggle)
+              ▼
+        <b>Recorder</b> ── AVAudioEngine, 16 kHz mono float ──► ring buffer + WAV to disk
+              │ streaming buffers                        │
+              ▼                                          ▼
+   ┌─ <b>TranscriptionEngine</b> (protocol) ─┐            <b>HistoryStore</b> (JSONL + audio)
+   │  SpeechAnalyzerEngine   (MVP)    │
+   │  ParakeetEngine (FluidAudio, later)
+   └──────────────┬───────────────────┘
+                  │ raw transcript
+                  ▼
+        <b>VocabularyRewriter</b> — plain string/regex replacement table
+                  ▼
+   ┌─ <b>PostProcessor</b> (protocol) ───────┐    ◄── <b>ContextSnapshot</b>
+   │  SmartProcessor (FoundationModels│         • selected text   (AX, at record start)
+   │    guided generation, MVP)       │         • clipboard       (≤3 s before / during)
+   │  Passthrough (raw)               │         • frontmost app, window title, focused-field text
+   │  (later: Ollama / Anthropic /    │
+   │   OpenAI behind the same seam)   │
+   └──────────────┬───────────────────┘
+                  │ final text
+                  ▼
+        <b>OutputInjector</b> — AX setValue into focused element when possible,
+                         else pasteboard + synthetic ⌘V, then restore pasteboard.
+                         Refuses when secure input is active (IsSecureEventInputEnabled).
+</pre>
+    </div>
+    <p><strong>Exactly two protocol seams</strong> — <code>TranscriptionEngine</code> and <code>PostProcessor</code> — because both have concrete planned second implementations. Everything else is a plain type. No plugin system, no DI framework.</p>
+    <p>UI: <code>MenuBarExtra</code> (menu bar icon, no Dock), one non-activating floating <code>NSPanel</code> HUD, one SwiftUI settings window. State in <code>UserDefaults</code> via <code>@AppStorage</code>.</p>
+  </section>
+
+  <section id="behaviors">
+    <h2><span class="n">3</span>The two behaviors (replaces the mode system)</h2>
+    <p><strong>Dictate</strong> (default): speak → transcript → SmartProcessor cleanup → paste.<br>
+    Cleanup contract: fix punctuation/casing/paragraphs, drop filler ("um", false starts), apply self-corrections ("meet at 3 — no, 4" → "meet at 4"), spoken URLs/emails → real ones, <strong>never change meaning or tone, never add content</strong>. Foundation Models guided generation returns a typed struct, so output is the cleaned string — no prompt-injection-shaped surprises from the transcript.</p>
+    <p><strong>Transform</strong>: if text was selected when recording started <em>and</em> the utterance is imperative ("make this a bullet list", "translate to formal English"), apply the instruction to the selection and replace it. Intent classification = one guided-generation call returning an enum (<code>.dictation</code> / <code>.transform</code>). When unsure → Dictate (never surprise the user).</p>
+    <p><strong>Raw escape hatch</strong>: hold ⇧ when stopping → skip post-processing entirely. Also auto-skip when Foundation Models is unavailable (Apple Intelligence off) or the recording exceeds a length cap — paste fast, never hostage the user to a slow model.</p>
+    <p class="lede"><em>That's the whole product surface.</em> Per-app behavior overrides only if real usage demands them.</p>
+  </section>
+
+  <section id="tech">
+    <h2><span class="n">4</span>Tech choices &amp; rationale</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Concern</th><th>Choice</th><th>Why (and what we rejected)</th></tr></thead>
+        <tbody>
+          <tr><td>Language / UI</td><td>Swift 6 + SwiftUI, AppKit where needed</td><td>Native APIs are the product (AX, hotkeys, panels). Rejected Tauri/Electron: AX bridging pain, footprint.</td></tr>
+          <tr><td>STT</td><td><strong>SpeechAnalyzer / DictationTranscriber</strong> (macOS 26)</td><td>Native platform feature: on-device, ANE, streaming, ~55% faster than Whisper in benchmarks, <strong>zero model management</strong>. Rejected whisper.cpp for MVP: 1.5–3 GB downloads + C++ build contradict "radically simpler".</td></tr>
+          <tr><td>STT fallback</td><td>FluidAudio ParakeetEngine (post-MVP, behind the seam)</td><td>MIT/Apache Swift package, ANE CoreML, 25 langs; covers SpeechAnalyzer quality gaps incl. its missing custom-vocab API.</td></tr>
+          <tr><td>LLM cleanup</td><td><strong>Foundation Models framework</strong></td><td>On-device ~3B, free, private, guided generation gives typed output, tool calling for the agentic roadmap. WWDC26 opened the framework to third-party providers → Ollama/Claude plug into the <em>same</em> API later.</td></tr>
+          <tr><td>Hotkey</td><td>Carbon <code>RegisterEventHotKey</code></td><td>Works globally with <strong>no Input Monitoring permission</strong>. CGEventTap (needed for Fn/Globe key) is roadmap.</td></tr>
+          <tr><td>Context capture</td><td><code>AXUIElement</code> + NSPasteboard changeCount polling</td><td>Same mechanism superwhisper uses; needs Accessibility permission (also enables ⌘V synth).</td></tr>
+          <tr><td>Persistence</td><td>JSONL + WAV files; <code>UserDefaults</code> for settings</td><td>No DB, no schema migration, user-greppable. Rejected SwiftData/GRDB: nothing here needs queries.</td></tr>
+          <tr><td>Distribution</td><td>Non-sandboxed, Developer ID signed, notarized DMG</td><td>AX APIs rule out App Store sandbox. GitHub Releases; Sparkle updates post-MVP (opt-in, privacy note).</td></tr>
+          <tr><td>License</td><td>MIT</td><td>FluidAudio is MIT/Apache — compatible. <strong>VoiceInk is GPLv3: reference behavior only, never copy code.</strong></td></tr>
+          <tr><td>CI</td><td>GitHub Actions, macOS 26 runner: build + unit tests</td><td>Notarization in CI post-MVP.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Prior art, studied not copied:</strong> VoiceInk (GPLv3 superwhisper clone, whisper.cpp), parakey (~100 ms Parakeet push-to-talk, proves the ANE latency story), FluidVoice, macparakeet. Our niche vs. all of them: native Apple AI stack end-to-end (no model downloads at all) + the agentic seam.</p>
+  </section>
+
+  <section id="process">
+    <h2><span class="n">5</span>MVP development process</h2>
+    <div class="callout">
+      <strong>Prereq:</strong> install full Xcode 26 (only CommandLineTools active today: <code>xcode-select -p</code> → CLT). Then <code>git init</code>, MIT LICENSE, this doc, CI skeleton.
+    </div>
+    <p>Tracer-bullet milestones. Each has an exit test; a milestone isn't done until its check passes on a real app in real apps.</p>
+
+    <div class="milestones">
+      <div class="milestone">
+        <div class="head"><span class="id">M0</span><h3>Tracer bullet <em>(the whole loop, ugly)</em></h3></div>
+        <p>Menu-bar skeleton; hotkey; AVAudioEngine capture; SpeechAnalyzer transcription; pasteboard + ⌘V injection with clipboard restore.</p>
+        <div class="exit"><b>Exit:</b> hotkey-dictate a sentence into TextEdit and Slack. Latency stop→paste &lt; 1.5 s for a 10 s utterance.</div>
+      </div>
+      <div class="milestone">
+        <div class="head"><span class="id">M1</span><h3>Recording UX</h3></div>
+        <p>Floating HUD pill (waveform, state dot, Esc = cancel), push-to-talk <em>and</em> toggle semantics, start/stop/cancel sounds, error surfacing (no mic, no permission).</p>
+        <div class="exit"><b>Exit:</b> 20 consecutive dictations without touching the mouse; cancel discards; HUD never steals focus.</div>
+      </div>
+      <div class="milestone">
+        <div class="head"><span class="id">M2</span><h3>Smart processing + context</h3></div>
+        <p>ContextSnapshot (AX selection at record start, 3 s clipboard rule, frontmost app); SmartProcessor with cleanup contract; Dictate/Transform intent gate; ⇧ raw escape; VocabularyRewriter; graceful degradation when Apple Intelligence is off.</p>
+        <div class="exit"><b>Exit:</b> golden-transcript unit suite for cleanup contract passes; "make this a bullet list" over a selection works in Notes; filler removal demonstrably works; raw path unaffected.</div>
+      </div>
+      <div class="milestone">
+        <div class="head"><span class="id">M3</span><h3>App-ness</h3></div>
+        <p>History (JSONL + WAV, retention setting, list in settings window with copy), settings (hotkey recorder, sounds toggle, vocabulary editor, history retention), first-run onboarding that walks mic + Accessibility grants, launch-at-login (<code>SMAppService</code>), secure-input refusal.</p>
+        <div class="exit"><b>Exit:</b> on a clean macOS user account, onboarding → working dictation with no manual System Settings spelunking; app survives permission revocation without crashing.</div>
+      </div>
+      <div class="milestone">
+        <div class="head"><span class="id">M4</span><h3>Ship it</h3></div>
+        <p>App icon, README with GIF, Developer ID signing + notarized DMG, GitHub Actions (build + tests), CONTRIBUTING, tagged v0.1.0 release.</p>
+        <div class="exit"><b>Exit:</b> a stranger downloads the DMG, opens it, dictates within 2 minutes.</div>
+      </div>
+    </div>
+
+    <p><strong>Working rules</strong> (ponytail-aligned): every non-trivial pure component (VocabularyRewriter, intent gate, clipboard timing, cleanup contract) lands with one runnable check — plain XCTest, no fixtures. UI and AX behavior verified by driving the real app, not mocks. Shortest diff that passes the exit test wins; anything speculative goes to §7, not into code. Deliberate ceilings get a <code>// ponytail:</code> comment naming the upgrade path.</p>
+    <p>Rough shape: ~2–4 k LOC Swift. M0 is a day-scale task; each later milestone is days, not weeks.</p>
+  </section>
+
+  <section id="risks">
+    <h2><span class="n">6</span>Risks &amp; mitigations</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>SpeechAnalyzer accuracy on jargon (no custom-vocab API)</td><td>VocabularyRewriter post-pass + prompt-bias in cleanup; ParakeetEngine behind the seam if quality still short.</td></tr>
+          <tr><td>Foundation Models needs Apple Intelligence enabled + Apple Silicon</td><td>Detect at launch; degrade to Passthrough with a one-line notice. Ollama provider later for the same seam.</td></tr>
+          <tr><td>FM latency/quality on long dictations</td><td>Length cap → auto-raw beyond it; async reprocess-from-history later. Never block paste on a slow model.</td></tr>
+          <tr><td>Paste injection edge cases (Electron apps, secure fields, vim)</td><td>Fallback chain AX→⌘V; secure-input detection refuses + notifies; keep a "copy only, no paste" toggle.</td></tr>
+          <tr><td>macOS 26-only APIs shrink audience</td><td>Accept: floor = macOS 26 + Apple Silicon. It's the cost of the zero-download story; whisper.cpp back-port only if demand is real.</td></tr>
+          <tr><td>GPL contamination from reading VoiceInk</td><td>Behavior reference only; MIT codebase; no code copying.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="roadmap">
+    <h2><span class="n">7</span>Post-MVP roadmap (ordered)</h2>
+    <ol>
+      <li><strong>Agentic voice commands</strong> — Foundation Models tool calling: "open the pull request tab", "run the tests", Claude Code / terminal dictation profile. The reason the PostProcessor seam exists.</li>
+      <li><strong>Provider plug-ins</strong> — Ollama + Anthropic/OpenAI/Groq behind PostProcessor (BYO keys, off by default); Parakeet + optional cloud STT behind TranscriptionEngine.</li>
+      <li><strong>Realtime on-screen transcript</strong> (SpeechAnalyzer streams natively).</li>
+      <li><strong>Reprocess from history</strong>, file transcription (drag audio onto menu bar icon).</li>
+      <li><strong>Fn/Globe-key hotkey</strong> via CGEventTap (accepting the Input Monitoring permission).</li>
+      <li><strong>Meeting capture</strong> — ScreenCaptureKit system audio + FluidAudio diarization.</li>
+      <li>Sparkle auto-updates (opt-in), per-app overrides <em>only if</em> real usage demands them.</li>
+    </ol>
+  </section>
+
+  <footer>
+    <p>Source doc: <code>whisperclone/DESIGN.md</code> · Key references:</p>
+    <ul>
+      <li><a href="https://developer.apple.com/videos/play/wwdc2025/277/" rel="noopener">SpeechAnalyzer (WWDC25)</a></li>
+      <li><a href="https://developer.apple.com/documentation/FoundationModels" rel="noopener">Foundation Models docs</a></li>
+      <li><a href="https://www.macrumors.com/2025/06/18/apple-transcription-api-faster-than-whisper/" rel="noopener">Speed vs Whisper (MacRumors)</a></li>
+      <li><a href="https://github.com/FluidInference/FluidAudio" rel="noopener">FluidAudio</a></li>
+      <li><a href="https://github.com/rcourtman/parakey" rel="noopener">parakey</a></li>
+      <li><a href="https://github.com/Beingpax/VoiceInk" rel="noopener">VoiceInk</a></li>
+      <li><a href="https://superwhisper.com/docs/llms.txt" rel="noopener">superwhisper docs</a></li>
+    </ul>
+  </footer>
+</div>
