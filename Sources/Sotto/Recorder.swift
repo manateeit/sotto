@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import os
 
 /// Microphone capture via AVAudioEngine. Installs a tap on the input node and
 /// hands each raw buffer to `onBuffer`; format conversion is the engine's job
@@ -13,17 +14,40 @@ final class Recorder {
 
     private let engine = AVAudioEngine()
     private var running = false
+    /// The WAV writer, guarded by a lock: the tap thread writes to it while
+    /// start/stop (main) open and close it (same shape as the M0 engine's state).
+    private let audioFile = OSAllocatedUnfairLock<AVAudioFile?>(uncheckedState: nil)
 
-    func start() throws {
+    /// Start capture. If `writingWAVTo` is given, the raw mic audio is also written
+    /// to that WAV (for open history/audio); a write failure never fails recording.
+    func start(writingWAVTo url: URL? = nil) throws {
         guard !running else { return }
         let input = engine.inputNode
         // Tap in the input node's native hardware format; the engine converts.
         let format = input.outputFormat(forBus: 0)
+
+        if let url {
+            do {
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let file = try AVAudioFile(forWriting: url, settings: format.settings)
+                audioFile.withLockUnchecked { $0 = file }
+            } catch {
+                NSLog("Sotto: couldn't open WAV for writing: \(error)")
+                audioFile.withLockUnchecked { $0 = nil }
+            }
+        }
+
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             self.onBuffer?(buffer)
             if let onLevel = self.onLevel {
                 onLevel(Recorder.level(of: buffer))
+            }
+            // ponytail: writes on the tap thread (not the hard-realtime render
+            // thread); move to a writer queue if disk I/O ever hitches capture.
+            self.audioFile.withLockUnchecked { file in
+                try? file?.write(from: buffer)
             }
         }
         engine.prepare()
@@ -33,6 +57,7 @@ final class Recorder {
             // Don't leave the tap installed — a later start() would stack a second
             // tap on the same bus and crash.
             input.removeTap(onBus: 0)
+            audioFile.withLockUnchecked { $0 = nil }
             throw error
         }
         running = true
@@ -40,8 +65,9 @@ final class Recorder {
 
     func stop() {
         guard running else { return }
-        engine.inputNode.removeTap(onBus: 0)
+        engine.inputNode.removeTap(onBus: 0) // synchronous: no more tap callbacks after this
         engine.stop()
+        audioFile.withLockUnchecked { $0 = nil }
         running = false
     }
 

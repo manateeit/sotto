@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
 
@@ -48,6 +49,7 @@ final class OutputInjector {
     enum Result {
         case pasted
         case refusedSecureInput
+        case refusedNoAccessibility
         case empty
     }
 
@@ -76,6 +78,14 @@ final class OutputInjector {
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
             return .refusedSecureInput
+        }
+
+        if !AXIsProcessTrusted() {
+            // Accessibility not granted / revoked → a synthetic ⌘V won't be
+            // delivered. Leave the transcript on the clipboard rather than losing it.
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return .refusedNoAccessibility
         }
 
         let snapshot = PasteboardSnapshot.capture(pasteboard)

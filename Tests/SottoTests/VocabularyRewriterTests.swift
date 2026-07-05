@@ -75,4 +75,19 @@ import Testing
         #expect(rewriter.rules.isEmpty)
         #expect(rewriter.rewrite("unchanged text") == "unchanged text")
     }
+
+    @Test func encodeDecodeRoundTrip() {
+        // The settings editor saves via encoded(); it must decode back to the same rules.
+        let original = VocabularyRewriter(rules: [
+            .init("github", "GitHub"),
+            .init("\\bum\\b", "", isRegex: true)
+        ])
+        let data = original.encoded()!
+        let decoded = VocabularyRewriter.decode(data)
+        #expect(decoded.rules.count == 2)
+        #expect(decoded.rules[0].pattern == "github")
+        #expect(decoded.rules[0].replacement == "GitHub")
+        #expect(decoded.rules[0].isRegex == false)
+        #expect(decoded.rules[1].isRegex == true)
+    }
 }

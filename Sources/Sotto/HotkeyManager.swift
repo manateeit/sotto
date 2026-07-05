@@ -9,8 +9,6 @@ import Carbon.HIToolbox
 /// passive `NSEvent` global monitor, so we don't register Esc as a hotkey (which
 /// would swallow it from every other app).
 ///
-// ponytail: hardcoded ⌥+Space. M3 adds a settings hotkey recorder that
-// re-registers on change; the Carbon plumbing here stays the same.
 final class HotkeyManager {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
@@ -19,8 +17,27 @@ final class HotkeyManager {
     private var handlerRef: EventHandlerRef?
     private let signature: OSType = 0x534F_5454 // 'SOTT'
 
-    func register() {
-        // Handle both key-down and key-up for the hotkey.
+    /// Register the handler (once) and bind the hotkey to `keyCode` + Carbon
+    /// `modifiers` (e.g. kVK_Space + optionKey). Returns whether binding succeeded.
+    @discardableResult
+    func register(keyCode: Int, modifiers: Int) -> Bool {
+        installHandlerIfNeeded()
+        return bindHotKey(keyCode: keyCode, modifiers: modifiers)
+    }
+
+    /// Re-bind to a new key without reinstalling the handler (settings recorder).
+    /// Returns whether the new binding succeeded (the caller reverts on failure).
+    @discardableResult
+    func rebind(keyCode: Int, modifiers: Int) -> Bool {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        return bindHotKey(keyCode: keyCode, modifiers: modifiers)
+    }
+
+    private func installHandlerIfNeeded() {
+        guard handlerRef == nil else { return }
         var specs = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
@@ -37,19 +54,24 @@ final class HotkeyManager {
         if installStatus != noErr {
             NSLog("Sotto: InstallEventHandler failed with status \(installStatus); hotkey will not fire.")
         }
+    }
 
+    @discardableResult
+    private func bindHotKey(keyCode: Int, modifiers: Int) -> Bool {
         let hotKeyID = EventHotKeyID(signature: signature, id: 1)
         let registerStatus = RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(optionKey),
+            UInt32(keyCode),
+            UInt32(modifiers),
             hotKeyID,
             GetApplicationEventTarget(),
             0,
             &hotKeyRef
         )
         if registerStatus != noErr {
-            NSLog("Sotto: RegisterEventHotKey failed with status \(registerStatus); ⌥Space may be taken by another app.")
+            NSLog("Sotto: RegisterEventHotKey failed with status \(registerStatus); the shortcut may be taken by another app.")
+            return false
         }
+        return true
     }
 
     func unregister() {
@@ -57,6 +79,20 @@ final class HotkeyManager {
         if let handlerRef { RemoveEventHandler(handlerRef) }
         hotKeyRef = nil
         handlerRef = nil
+    }
+
+    /// Temporarily free the global hotkey (keeps the handler installed) so the
+    /// settings recorder can capture the same combo without it firing dictation.
+    func suspend() {
+        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
+        hotKeyRef = nil
+    }
+
+    /// Re-bind after a `suspend()`; returns whether it registered.
+    @discardableResult
+    func resume(keyCode: Int, modifiers: Int) -> Bool {
+        guard hotKeyRef == nil else { return true }
+        return bindHotKey(keyCode: keyCode, modifiers: modifiers)
     }
 
     fileprivate func handle(kind: UInt32) {

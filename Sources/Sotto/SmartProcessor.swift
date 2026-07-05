@@ -31,8 +31,8 @@ struct ProcessingPolicy {
 
 /// The paste decision for a finished dictation.
 enum PipelineOutcome: Equatable {
-    /// Paste this text.
-    case paste(String)
+    /// Paste this text, produced by `mode` ("dictate"/"transform"/"raw").
+    case paste(text: String, mode: String)
     /// A transform attempt failed — do not paste; leave the selection untouched.
     case transformFailed
 }
@@ -55,11 +55,13 @@ struct ProcessingPipeline {
              raw: any PostProcessor) async -> PipelineOutcome {
         let route = policy.route(shiftHeld: shiftHeld, smartAvailable: smartAvailable, textLength: text.count)
         if route == .raw {
-            let out = (try? await raw.process(text, context: context)) ?? text
-            return .paste(out)
+            let result = (try? await raw.process(text, context: context))
+                ?? PostProcessorResult(text: text, mode: "raw")
+            return .paste(text: result.text, mode: result.mode)
         }
         do {
-            return .paste(try await smart.process(text, context: context))
+            let result = try await smart.process(text, context: context)
+            return .paste(text: result.text, mode: result.mode)
         } catch {
             return .transformFailed
         }
@@ -105,11 +107,15 @@ struct SmartProcessor: PostProcessor {
     /// non-fatal and returns the raw transcript. A transform attempt (classify or
     /// transform) that fails/times out throws `TransformFailed` so the caller can
     /// leave the selection untouched — pasting the raw command would clobber it.
-    func process(_ text: String, context: ContextSnapshot) async throws -> String {
+    func process(_ text: String, context: ContextSnapshot) async throws -> PostProcessorResult {
         // Defensive: caller routes on availability, but never trust a stale check.
-        guard SystemLanguageModel.default.isAvailable else { return text }
+        guard SystemLanguageModel.default.isAvailable else {
+            return PostProcessorResult(text: text, mode: "dictate")
+        }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return text }
+        guard !trimmed.isEmpty else {
+            return PostProcessorResult(text: text, mode: "dictate")
+        }
 
         if Self.canTransform(context: context), let selection = context.selectedText {
             let intent: Intent
@@ -122,9 +128,10 @@ struct SmartProcessor: PostProcessor {
             }
             if intent == .transform {
                 do {
-                    return try await withTimeout(Self.timeout) {
+                    let out = try await withTimeout(Self.timeout) {
                         try await transform(instruction: trimmed, selection: selection)
                     }
+                    return PostProcessorResult(text: out, mode: "transform")
                 } catch {
                     throw TransformFailed()
                 }
@@ -133,11 +140,13 @@ struct SmartProcessor: PostProcessor {
         }
 
         do {
-            return try await withTimeout(Self.timeout) {
+            let cleaned = try await withTimeout(Self.timeout) {
                 try await clean(trimmed, context: context)
             }
+            return PostProcessorResult(text: cleaned, mode: "dictate")
         } catch {
-            return text // dictate failure is non-fatal: paste the raw transcript
+            // Dictate failure is non-fatal: paste the raw transcript.
+            return PostProcessorResult(text: text, mode: "dictate")
         }
     }
 

@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import Combine
 import Foundation
 
 /// Menu-bar-only orchestrator for the dictation loop:
@@ -19,6 +20,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hud = HUDController()
     private let sounds = Sounds()
     private var gesture = HotkeyGesture()
+    private let settings = Settings()
+    private let windows = AppWindows()
+    private var cancellables: Set<AnyCancellable> = []
+    /// History id for the in-flight dictation (and its WAV filename).
+    private var currentEntryID: String?
+    /// Wall-clock start of the in-flight recording, for history duration.
+    private var recordStartDate = Date()
+    /// Last hotkey combo that registered, for revert-on-failure.
+    private var lastGoodHotkey: (keyCode: Int, modifiers: Int)?
+    /// Set while reverting a rejected hotkey, so the observer doesn't re-process the
+    /// reverted values (and clobber the error message).
+    private var revertingHotkey = false
 
     /// Context captured at record start; AX pieces merge in asynchronously and the
     /// clipboard field is filled at stop.
@@ -57,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildStatusItem()
+        sounds.enabled = settings.soundsEnabled
         requestMicrophoneAccess()
         promptForAccessibilityTrust()
 
@@ -67,13 +81,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.onKeyUp = { [weak self] in
             MainActor.assumeIsolated { self?.handleKeyUp() }
         }
-        hotkey.register()
+        if hotkey.register(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers) {
+            lastGoodHotkey = (settings.hotkeyKeyCode, settings.hotkeyModifiers)
+        }
         clipboard.start()
 
         // Load the user's vocabulary (writes an example file on first run) and feed
         // its canonical terms to the smart processor as bias hints.
-        vocabulary = VocabularyStore.loadCreatingExampleIfNeeded()
-        smart = SmartProcessor(vocabTerms: vocabulary.hintTerms)
+        reloadVocabulary()
+        observeSettings()
+
+        // Retire history past its retention window.
+        HistoryStore.prune(retentionDays: settings.historyRetentionDays)
+
+        // Onboarding is shown *only* when a required permission is missing.
+        if Onboarding.shouldShow(micAuthorized: micAuthorized, axTrusted: AXIsProcessTrusted()) {
+            windows.showOnboarding(onDone: {})
+        }
 
         // Kick off model asset preparation; reflect progress in the menu.
         Task { [weak self] in
@@ -88,6 +112,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// React to settings changes: sounds, hotkey rebind, and vocabulary reloads.
+    private func observeSettings() {
+        settings.$soundsEnabled
+            .sink { [weak self] in self?.sounds.enabled = $0 }
+            .store(in: &cancellables)
+
+        settings.$smartCleanupEnabled
+            .dropFirst() // don't clobber the "Preparing…" status at launch
+            .sink { [weak self] _ in self?.reflectReadyStatus() }
+            .store(in: &cancellables)
+
+        // Coalesce the two properties (a hotkey change sets both) into one rebind.
+        settings.$hotkeyKeyCode.combineLatest(settings.$hotkeyModifiers)
+            .dropFirst() // skip the initial value; already registered at launch
+            .debounce(for: .milliseconds(50), scheduler: RunLoop.main)
+            .sink { [weak self] keyCode, modifiers in
+                guard let self else { return }
+                if self.revertingHotkey { self.revertingHotkey = false; return }
+                self.applyHotkey(keyCode: keyCode, modifiers: modifiers)
+            }
+            .store(in: &cancellables)
+
+        // Free / re-register the global hotkey around a recorder capture so the
+        // current combo can be re-recorded without firing dictation.
+        NotificationCenter.default.publisher(for: .sottoHotkeyCaptureBegan)
+            .sink { [weak self] _ in self?.hotkey.suspend() }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .sottoHotkeyCaptureEnded)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.hotkey.resume(keyCode: self.settings.hotkeyKeyCode, modifiers: self.settings.hotkeyModifiers)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .sottoVocabularyChanged)
+            .sink { [weak self] _ in self?.reloadVocabulary() }
+            .store(in: &cancellables)
+    }
+
+    /// Re-register the hotkey; on failure (e.g. the combo is taken) surface an error
+    /// and revert the settings to the last combo that registered.
+    private func applyHotkey(keyCode: Int, modifiers: Int) {
+        if hotkey.rebind(keyCode: keyCode, modifiers: modifiers) {
+            lastGoodHotkey = (keyCode, modifiers)
+            settings.hotkeyError = nil
+        } else {
+            let attempted = HotkeyFormatter.displayString(keyCode: keyCode, modifiers: modifiers)
+            if let good = lastGoodHotkey, good.keyCode != keyCode || good.modifiers != modifiers {
+                let kept = HotkeyFormatter.displayString(keyCode: good.keyCode, modifiers: good.modifiers)
+                settings.hotkeyError = "Couldn't register \(attempted) — kept \(kept)."
+                // Re-register the known-good combo and revert the persisted values.
+                // Suppress the observer so the revert doesn't re-run applyHotkey and
+                // clear the error we just set.
+                _ = hotkey.rebind(keyCode: good.keyCode, modifiers: good.modifiers)
+                revertingHotkey = true
+                settings.hotkeyKeyCode = good.keyCode
+                settings.hotkeyModifiers = good.modifiers
+            } else {
+                settings.hotkeyError = "Couldn't register \(attempted)."
+            }
+        }
+    }
+
+    private var micAuthorized: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    private func reloadVocabulary() {
+        vocabulary = VocabularyStore.loadCreatingExampleIfNeeded()
+        smart = SmartProcessor(vocabTerms: vocabulary.hintTerms)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.unregister()
         removeEscMonitor()
@@ -99,7 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// "Ready", noting when smart cleanup is degraded to raw (Apple Intelligence
     /// off, etc.) — DESIGN.md §6's one-line degradation notice.
     private func reflectReadyStatus() {
-        if let note = SmartProcessor.unavailableNote {
+        if !settings.smartCleanupEnabled {
+            setStatus("Ready — smart cleanup off")
+        } else if let note = SmartProcessor.unavailableNote {
             setStatus("Ready — smart cleanup off (\(note))")
         } else {
             setStatus("Ready")
@@ -156,6 +254,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelRequestedDuringStart = false
         cancelHUDDismiss()
 
+        // History id for this dictation; write a WAV alongside it if enabled.
+        let entryID = UUID().uuidString
+        currentEntryID = entryID
+        recordStartDate = Date()
+        let wavURL = (settings.historyEnabled && settings.keepAudio)
+            ? HistoryStore.audioURL(forID: entryID) : nil
+
         sounds.play(.start)
         hud.show(.recording)
         setRecordingIcon(true)
@@ -169,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 recorder.onLevel = { [weak self] level in
                     Task { @MainActor in self?.hud.model.pushLevel(level) }
                 }
-                try recorder.start()
+                try recorder.start(writingWAVTo: wavURL)
 
                 if cancelRequestedDuringStart {
                     performCancel(playSound: false)
@@ -241,7 +346,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            let smartAvailable = SmartProcessor.isAvailable
+            // Smart cleanup is used only when available AND the user hasn't turned it
+            // off; otherwise route falls to raw.
+            let smartAvailable = SmartProcessor.isAvailable && settings.smartCleanupEnabled
             let goingSmart = pipeline.policy.route(
                 shiftHeld: shiftHeld,
                 smartAvailable: smartAvailable,
@@ -268,14 +375,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("Sotto: transform attempt failed — selection left unchanged.")
                 setStatus("Transform failed — selection unchanged.")
                 showError("Transform failed — selection left as-is")
-            case .paste(let text):
-                paste(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            case .paste(let text, let route):
+                paste(text.trimmingCharacters(in: .whitespacesAndNewlines),
+                      rawTranscript: raw, route: route, snapshot: snapshot)
             }
         }
     }
 
-    /// Inject the final text and reflect the result on the HUD + status line.
-    private func paste(_ output: String) {
+    /// Inject the final text, reflect the result on the HUD + status line, and record
+    /// the dictation to open history.
+    private func paste(_ output: String, rawTranscript: String, route: String, snapshot: ContextSnapshot) {
         guard !output.isEmpty else {
             setStatus("No speech detected.")
             hud.hide()
@@ -289,10 +398,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("Sotto: secure input active — left transcript on clipboard.")
             setStatus("Secure field — copied to clipboard.")
             flashDoneThenHide()
+        case .refusedNoAccessibility:
+            NSLog("Sotto: Accessibility not granted — left transcript on clipboard.")
+            setStatus("Accessibility not granted — text copied.")
+            showError("Accessibility not granted — text copied") // notice + auto-dismiss
         case .empty:
             setStatus("No speech detected.")
             hud.hide()
+            return
         }
+        // History write sits AFTER inject — off the critical paste path.
+        recordHistory(rawTranscript: rawTranscript, finalOutput: output, route: route, snapshot: snapshot)
+    }
+
+    private func recordHistory(rawTranscript: String, finalOutput: String, route: String, snapshot: ContextSnapshot) {
+        guard settings.historyEnabled else { return }
+        let id = currentEntryID ?? UUID().uuidString
+        let audioFile = settings.keepAudio ? "\(id).wav" : nil
+        HistoryStore.append(HistoryEntry(
+            id: id,
+            date: recordStartDate,
+            rawTranscript: rawTranscript,
+            finalOutput: finalOutput,
+            route: route,
+            app: snapshot.frontmostApp,
+            bundleID: snapshot.bundleID,
+            durationSeconds: Date().timeIntervalSince(recordStartDate),
+            engineID: "SpeechAnalyzer",
+            audioFile: audioFile
+        ))
     }
 
     /// Briefly show the green "done" dot, then dismiss the HUD.
@@ -396,6 +530,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        let permissionsItem = NSMenuItem(title: "Permissions…", action: #selector(openPermissions), keyEquivalent: "")
+        permissionsItem.target = self
+        menu.addItem(permissionsItem)
+        menu.addItem(.separator())
         menu.addItem(
             NSMenuItem(title: "Quit Sotto", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         )
@@ -403,6 +544,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
         statusItem = item
         statusMenuItem = status
+    }
+
+    @objc private func openSettings() {
+        guard phase == .idle else { setStatus("Finish dictating first — then open Settings."); return }
+        windows.showSettings(settings: settings)
+    }
+
+    /// Reopen the onboarding/permissions window — a path back after a revocation.
+    @objc private func openPermissions() {
+        guard phase == .idle else { setStatus("Finish dictating first — then open Settings."); return }
+        windows.showOnboarding(onDone: {})
+    }
+
+    /// Don't let Settings/Permissions open during an active dictation: activating
+    /// Sotto's window would redirect the eventual ⌘V into it.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(openSettings) || menuItem.action == #selector(openPermissions) {
+            return phase == .idle
+        }
+        return true
     }
 
     private func setStatus(_ text: String) {

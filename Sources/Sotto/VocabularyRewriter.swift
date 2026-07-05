@@ -71,4 +71,21 @@ struct VocabularyRewriter: Sendable {
             Rule($0.pattern, $0.replacement, isRegex: $0.regex ?? false)
         })
     }
+
+    private struct OutFile: Encodable {
+        struct OutRule: Encodable {
+            let pattern: String
+            let replacement: String
+            let regex: Bool
+        }
+        let rules: [OutRule]
+    }
+
+    /// Encode the rules back to the `vocabulary.json` format. Pure.
+    func encoded() -> Data? {
+        let file = OutFile(rules: rules.map { .init(pattern: $0.pattern, replacement: $0.replacement, regex: $0.isRegex) })
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
+        return try? encoder.encode(file)
+    }
 }

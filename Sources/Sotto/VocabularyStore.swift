@@ -24,6 +24,13 @@ enum VocabularyStore {
         return VocabularyRewriter.decode(data)
     }
 
+    /// Persist the edited table back to the JSON file (settings vocabulary editor).
+    static func save(_ rewriter: VocabularyRewriter) {
+        guard let data = rewriter.encoded() else { return }
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try? data.write(to: fileURL)
+    }
+
     /// The example file written on first run. Empty `rules` by default (raw path
     /// stays byte-for-byte); `_comment` / `_example` teach the format and are
     /// ignored by the decoder, which only reads `rules`. Exposed for a round-trip
