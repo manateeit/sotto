@@ -10,7 +10,7 @@ Press a key, speak, polished text appears in whatever app you're using. That's t
 
 Sotto is a native macOS dictation app built on two ideas that most dictation apps trade away:
 
-- **Private by default.** Zero network calls. Transcription runs on-device with Apple's SpeechAnalyzer; cleanup runs on-device with Apple's Foundation Models. No accounts, no telemetry, nothing phones home. Cloud providers are opt-in and BYO-key, later.
+- **Private by default.** Zero network calls. Transcription runs on-device with Apple's SpeechAnalyzer; cleanup runs on-device with Apple's Foundation Models. No accounts, no telemetry, nothing phones home. The one exception is **Check for Updates…**, and it only ever runs when you click it — no background or startup checks. Cloud providers are opt-in and BYO-key, later.
 - **Radically simple.** No mode system, no model picker, no settings maze. Sotto has exactly two behaviors — see below — and if you find yourself opening Settings in the first week, we've failed.
 
 Your dictation history lives as plain JSONL + WAV files in `~/Library/Application Support/Sotto/history/`. Grep it, script it, delete it — it's yours.
@@ -40,6 +40,10 @@ open dist/Sotto.app
 
 No Xcode required — the build uses the Swift toolchain that ships with Command Line Tools.
 
+### Installing from the DMG
+
+Open the DMG and a Finder window appears with Sotto on the left and an Applications shortcut on the right — drag one onto the other. On first launch, a welcome window walks you through granting Microphone and Accessibility, then a short "how to dictate" guide (the same guide reachable later from the menu bar via **Welcome & Permissions…**). If your menu bar is too full for macOS to show Sotto's icon, that same window tells you so — ⌥Space still dictates either way.
+
 ## Usage
 
 Sotto lives in the menu bar. There's no Dock icon and no main window.
@@ -62,7 +66,8 @@ Smart cleanup requires Apple Intelligence to be turned on (System Settings → A
 Everything else lives in the menu bar dropdown:
 
 - **Settings…** — hotkey rebinding, sounds, smart cleanup toggle, launch at login, and a History tab (retention period, keep/discard audio, browse/reveal the JSONL + WAV files, Delete All)
-- **Permissions…** — microphone and Accessibility grant status, with deep links to System Settings
+- **Check for Updates…** — on click, checks GitHub for a newer release and tells you whether one's available. Never runs automatically; see the privacy note below.
+- **Welcome & Permissions…** — microphone and Accessibility grant status with deep links to System Settings, plus the "how to dictate" guide from first launch
 - Vocabulary — hand-edit `~/Library/Application Support/Sotto/vocabulary.json` to teach Sotto names, jargon, and known misrecognitions; it's applied before smart cleanup, on both the smart and raw paths
 
 ## Troubleshooting

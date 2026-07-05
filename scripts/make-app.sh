@@ -13,6 +13,9 @@ APP_NAME="Sotto"
 BUNDLE_ID="com.chrismckenna.sotto"
 VERSION="${VERSION:-0.0.1}"
 APP="dist/${APP_NAME}.app"
+# Optional override for UpdateChecker's GitHub owner/repo; unset by default so
+# Sources/Sotto/UpdateChecker.swift's hardcoded default applies.
+UPDATE_REPO="${SOTTO_UPDATE_REPO:-}"
 
 echo "==> Building release…"
 swift build -c release
@@ -76,6 +79,10 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
 PLIST
 
 printf 'APPL????' > "${APP}/Contents/PkgInfo"
+
+if [[ -n "$UPDATE_REPO" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :SottoUpdateRepo string ${UPDATE_REPO}" "${APP}/Contents/Info.plist"
+fi
 
 echo "==> Ad-hoc codesigning…"
 codesign --force --deep -s - "$APP"

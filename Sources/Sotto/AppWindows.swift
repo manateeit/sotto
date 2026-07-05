@@ -16,12 +16,15 @@ final class AppWindows: NSObject, NSWindowDelegate {
         present(settingsWindow)
     }
 
-    func showOnboarding(onDone: @escaping () -> Void) {
+    func showOnboarding(onDone: @escaping () -> Void, statusItemHidden: @escaping () -> Bool = { false }) {
         if onboardingWindow == nil {
-            let view = OnboardingView(onDone: { [weak self] in
-                self?.onboardingWindow?.close()
-                onDone()
-            })
+            let view = OnboardingView(
+                onDone: { [weak self] in
+                    self?.onboardingWindow?.close()
+                    onDone()
+                },
+                statusItemHidden: statusItemHidden
+            )
             onboardingWindow = makeWindow(title: "Welcome to Sotto", content: view)
         }
         present(onboardingWindow)

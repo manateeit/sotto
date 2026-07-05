@@ -94,9 +94,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Retire history past its retention window.
         HistoryStore.prune(retentionDays: settings.historyRetentionDays)
 
-        // Onboarding is shown *only* when a required permission is missing.
-        if Onboarding.shouldShow(micAuthorized: micAuthorized, axTrusted: AXIsProcessTrusted()) {
-            windows.showOnboarding(onDone: {})
+        // Onboarding is shown when a required permission is missing, or the "how to
+        // dictate" guide hasn't been seen yet (first launch).
+        if Onboarding.shouldShow(
+            micAuthorized: micAuthorized,
+            axTrusted: AXIsProcessTrusted(),
+            completedGuide: settings.completedOnboardingGuide
+        ) {
+            showOnboardingWindow()
         }
 
         // Kick off model asset preparation; reflect progress in the menu.
@@ -533,7 +538,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
-        let permissionsItem = NSMenuItem(title: "Permissions…", action: #selector(openPermissions), keyEquivalent: "")
+        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+        let permissionsItem = NSMenuItem(title: "Welcome & Permissions…", action: #selector(openPermissions), keyEquivalent: "")
         permissionsItem.target = self
         menu.addItem(permissionsItem)
         menu.addItem(.separator())
@@ -544,6 +552,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
         statusItem = item
         statusMenuItem = status
+
+        // The menu bar can silently hide our icon when it's full; surface that in
+        // the welcome window rather than leaving the user wondering where Sotto
+        // went. Deferred a tick so AppKit has finished laying out the status bar.
+        DispatchQueue.main.async { [weak self] in self?.logIfStatusItemHidden() }
+    }
+
+    private func logIfStatusItemHidden() {
+        guard let statusItem, !statusItem.isVisible else { return }
+        NSLog("Sotto: menu bar is full — macOS is hiding Sotto's status icon. ⌥Space still works without it.")
+    }
+
+    /// Shared onboarding presentation: wires the "guide seen" persistence and the
+    /// hidden-icon check into every entry point (first launch + on-demand menu item).
+    private func showOnboardingWindow() {
+        windows.showOnboarding(
+            onDone: { [weak self] in self?.settings.completedOnboardingGuide = true },
+            statusItemHidden: { [weak self] in self?.statusItem?.isVisible == false }
+        )
     }
 
     @objc private func openSettings() {
@@ -551,16 +578,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows.showSettings(settings: settings)
     }
 
-    /// Reopen the onboarding/permissions window — a path back after a revocation.
+    /// Reopen the onboarding/permissions window — a path back after a revocation,
+    /// and how to revisit the "how to dictate" guide on demand.
     @objc private func openPermissions() {
         guard phase == .idle else { setStatus("Finish dictating first — then open Settings."); return }
-        windows.showOnboarding(onDone: {})
+        showOnboardingWindow()
     }
 
-    /// Don't let Settings/Permissions open during an active dictation: activating
-    /// Sotto's window would redirect the eventual ⌘V into it.
+    /// GET the latest GitHub release and report newer/up-to-date/error via NSAlert.
+    /// Only ever runs on this explicit click — no background/timer checks, no
+    /// phoning home at launch (DESIGN.md privacy identity).
+    @objc private func checkForUpdates() {
+        guard phase == .idle else { setStatus("Finish dictating first — then check for updates."); return }
+        UpdateChecker.checkForUpdates()
+    }
+
+    /// Don't let Settings/Permissions/Updates open during an active dictation:
+    /// activating Sotto's window would redirect the eventual ⌘V into it.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(openSettings) || menuItem.action == #selector(openPermissions) {
+        if menuItem.action == #selector(openSettings)
+            || menuItem.action == #selector(openPermissions)
+            || menuItem.action == #selector(checkForUpdates) {
             return phase == .idle
         }
         return true

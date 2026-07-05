@@ -3,52 +3,148 @@ import ApplicationServices
 import AVFoundation
 import SwiftUI
 
-/// Onboarding gating logic, kept pure so "shows only when a permission is missing"
-/// is unit-testable.
+/// Onboarding gating logic, kept pure so "shows only when a permission is missing,
+/// or the guide hasn't been seen yet" is unit-testable.
 enum Onboarding {
-    static func shouldShow(micAuthorized: Bool, axTrusted: Bool) -> Bool {
-        !(micAuthorized && axTrusted)
+    static func shouldShow(micAuthorized: Bool, axTrusted: Bool, completedGuide: Bool) -> Bool {
+        !(micAuthorized && axTrusted && completedGuide)
     }
 }
 
-/// First-run walkthrough (DESIGN.md §5 M3): shown only when a required grant is
-/// missing. Two rows (Microphone, Accessibility) with live status and deep links
-/// into the right System Settings pane; it dismisses itself when both go green.
+/// First-run walkthrough (DESIGN.md §5 M3, expanded in M5): two steps — grant
+/// permissions, then a "how to dictate" guide — shown on first launch and
+/// reachable on demand via the "Welcome & Permissions…" menu item. Plain SwiftUI,
+/// no mascots or animation.
 struct OnboardingView: View {
     var onDone: () -> Void
+    /// Reports whether the menu bar is currently hiding Sotto's status icon
+    /// (macOS hides overflow items when the bar is full). Injected so this view
+    /// stays testable/preview-able without a real NSStatusItem.
+    var statusItemHidden: () -> Bool
 
-    @State private var micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    @State private var axTrusted = AXIsProcessTrusted()
+    private enum Step { case permissions, guide }
+
+    @State private var step: Step
+    @State private var micGranted: Bool
+    @State private var axTrusted: Bool
+    @State private var iconHidden = false
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    init(onDone: @escaping () -> Void, statusItemHidden: @escaping () -> Bool = { false }) {
+        self.onDone = onDone
+        self.statusItemHidden = statusItemHidden
+        let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let ax = AXIsProcessTrusted()
+        _micGranted = State(initialValue: mic)
+        _axTrusted = State(initialValue: ax)
+        _step = State(initialValue: (mic && ax) ? .guide : .permissions)
+    }
 
     var body: some View {
         VStack(spacing: 18) {
-            Text("Welcome to Sotto").font(.title).bold()
-            Text("Press ⌥Space, speak, press again — your words paste wherever you're typing. Sotto needs two grants:")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-
-            grantRow(title: "Microphone", detail: "to hear your dictation", granted: micGranted) {
-                Button("Grant") { requestMicrophone() }.disabled(micGranted)
+            switch step {
+            case .permissions: permissionsStep
+            case .guide: guideStep
             }
-            grantRow(title: "Accessibility", detail: "to paste into other apps", granted: axTrusted) {
-                Button("Grant") { requestAccessibility() }.disabled(axTrusted)
-            }
-
-            Spacer()
-            Text(micGranted && axTrusted ? "All set — you can dictate now."
-                                         : "This window closes itself once both are granted.")
-                .font(.caption).foregroundStyle(.secondary)
         }
         .padding(28)
-        .frame(width: 440, height: 320)
+        .frame(width: 460, height: 440)
+        .onAppear { refreshIconVisibility() }
         .onReceive(poll) { _ in
             micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             axTrusted = AXIsProcessTrusted()
-            if !Onboarding.shouldShow(micAuthorized: micGranted, axTrusted: axTrusted) {
-                onDone() // both green → dismiss itself
+            refreshIconVisibility()
+            // Once both grants land, move on to the guide instead of closing —
+            // the guide is the other half of onboarding now.
+            if step == .permissions, micGranted, axTrusted {
+                step = .guide
             }
         }
+    }
+
+    private func refreshIconVisibility() {
+        let hidden = statusItemHidden()
+        if hidden, !iconHidden {
+            NSLog("Sotto: menu bar is full — macOS is hiding Sotto's status icon.")
+        }
+        iconHidden = hidden
+    }
+
+    // MARK: Step 1 — permissions
+
+    @ViewBuilder
+    private var permissionsStep: some View {
+        Text("Welcome to Sotto").font(.title).bold()
+        Text("Press ⌥Space, speak, press again — your words paste wherever you're typing. Sotto needs two grants:")
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+
+        grantRow(title: "Microphone", detail: "to hear your dictation", granted: micGranted) {
+            Button("Grant") { requestMicrophone() }.disabled(micGranted)
+        }
+        grantRow(title: "Accessibility", detail: "to paste into other apps", granted: axTrusted) {
+            Button("Grant") { requestAccessibility() }.disabled(axTrusted)
+        }
+
+        if iconHidden { menuBarFullNotice }
+
+        Spacer()
+        Text(micGranted && axTrusted ? "All set — continuing to the quick guide…"
+                                     : "This continues once both are granted.")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+
+    // MARK: Step 2 — how to dictate
+
+    @ViewBuilder
+    private var guideStep: some View {
+        Text("How to dictate").font(.title).bold()
+
+        if iconHidden { menuBarFullNotice }
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                guideRow(title: "⌥Space, tap", detail: "Start recording; tap again to stop and paste.")
+                guideRow(title: "⌥Space, hold", detail: "Push-to-talk — records while held, stops on release.")
+                guideRow(title: "Esc, while recording", detail: "Cancel — discards the recording, nothing is pasted.")
+                guideRow(title: "⇧, while stopping", detail: "Raw escape hatch — pastes the unprocessed transcript, skipping smart cleanup.")
+                guideRow(title: "Select text, then speak an instruction",
+                         detail: "\"Make this a bullet list\" replaces the selection instead of dictating.")
+                guideRow(title: "Settings & history", detail: "Menu bar icon → Settings… for the hotkey, sounds, vocabulary, and dictation history.")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        Spacer()
+        HStack {
+            if step == .guide, !(micGranted && axTrusted) {
+                Button("Back to permissions") { step = .permissions }
+            }
+            Spacer()
+            Button("Got it — start dictating") { finishGuide() }
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func finishGuide() {
+        onDone()
+    }
+
+    @ViewBuilder
+    private func guideRow(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.headline)
+            Text(detail).font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private var menuBarFullNotice: some View {
+        Text("Your menu bar is full, so macOS is hiding Sotto's icon — remove an icon (⌘-drag it off) to see Sotto's mic. Sotto still works: ⌥Space dictates even without the icon.")
+            .font(.callout)
+            .foregroundStyle(.orange)
+            .multilineTextAlignment(.center)
+            .padding(10)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder

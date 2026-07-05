@@ -2,16 +2,21 @@ import Foundation
 import Testing
 @testable import Sotto
 
-/// Onboarding gates *only* on missing permissions (DESIGN.md M3 exit criterion).
+/// Onboarding gates on missing permissions (DESIGN.md M3 exit criterion) *and*,
+/// as of M5, on the "how to dictate" guide not having been seen yet.
 @Suite struct OnboardingGatingTests {
     @Test func showsWhenAnyPermissionMissing() {
-        #expect(Onboarding.shouldShow(micAuthorized: false, axTrusted: false) == true)
-        #expect(Onboarding.shouldShow(micAuthorized: true, axTrusted: false) == true)
-        #expect(Onboarding.shouldShow(micAuthorized: false, axTrusted: true) == true)
+        #expect(Onboarding.shouldShow(micAuthorized: false, axTrusted: false, completedGuide: true) == true)
+        #expect(Onboarding.shouldShow(micAuthorized: true, axTrusted: false, completedGuide: true) == true)
+        #expect(Onboarding.shouldShow(micAuthorized: false, axTrusted: true, completedGuide: true) == true)
     }
 
-    @Test func hiddenWhenBothGranted() {
-        #expect(Onboarding.shouldShow(micAuthorized: true, axTrusted: true) == false)
+    @Test func showsWhenGuideNotYetCompleted() {
+        #expect(Onboarding.shouldShow(micAuthorized: true, axTrusted: true, completedGuide: false) == true)
+    }
+
+    @Test func hiddenWhenBothGrantedAndGuideCompleted() {
+        #expect(Onboarding.shouldShow(micAuthorized: true, axTrusted: true, completedGuide: true) == false)
     }
 }
 
