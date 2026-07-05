@@ -77,7 +77,13 @@ private func hotKeyHandler(
 ) -> OSStatus {
     guard let userData, let event else { return OSStatus(eventNotHandledErr) }
     let kind = GetEventKind(event)
-    let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-    DispatchQueue.main.async { manager.handle(kind: kind) }
+    // Pass the manager's address as a Sendable integer and reconstruct it inside the
+    // main-queue closure, rather than sending the non-Sendable pointer/instance.
+    let address = UInt(bitPattern: userData)
+    DispatchQueue.main.async {
+        guard let raw = UnsafeMutableRawPointer(bitPattern: address) else { return }
+        let manager = Unmanaged<HotkeyManager>.fromOpaque(raw).takeUnretainedValue()
+        manager.handle(kind: kind)
+    }
     return noErr
 }

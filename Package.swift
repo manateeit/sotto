@@ -14,7 +14,7 @@ let package = Package(
             name: "Sotto",
             path: "Sources/Sotto",
             swiftSettings: [
-                .swiftLanguageMode(.v5)
+                .swiftLanguageMode(.v6)
             ]
         ),
         // Under CommandLineTools, swift-testing isn't on the default search path,
@@ -27,7 +27,7 @@ let package = Package(
             dependencies: ["Sotto"],
             path: "Tests/SottoTests",
             swiftSettings: [
-                .swiftLanguageMode(.v5)
+                .swiftLanguageMode(.v6)
             ]
         )
     ]

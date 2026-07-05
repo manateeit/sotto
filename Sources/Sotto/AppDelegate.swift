@@ -10,11 +10,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkey = HotkeyManager()
     private let recorder = Recorder()
     private let engine: TranscriptionEngine = SpeechAnalyzerEngine()
-    private let postProcessor: PostProcessor = Passthrough()
+    private var vocabulary = VocabularyRewriter.empty
+    private var smart = SmartProcessor()
+    private let rawProcessor: PostProcessor = Passthrough()
+    private let pipeline = ProcessingPipeline()
+    private let clipboard = ClipboardMonitor()
     private let injector = OutputInjector()
     private let hud = HUDController()
     private let sounds = Sounds()
     private var gesture = HotkeyGesture()
+
+    /// Context captured at record start; AX pieces merge in asynchronously and the
+    /// clipboard field is filled at stop.
+    private var context = ContextSnapshot()
+    /// Uptime at record start, for the clipboard "changed since (start − 3s)" rule.
+    private var contextStartUptime: TimeInterval = 0
+    /// How far before record start a clipboard change still counts as context.
+    private let clipboardWindow: TimeInterval = 3
+    /// Off-main AX capture; guarded by `recordingGeneration` so a stale result can't
+    /// merge into a newer recording's context.
+    private var axCaptureTask: Task<Void, Never>?
+    private var recordingGeneration = 0
+    // ponytail: 1s budget for the off-main AX read; if it doesn't resolve in time
+    // the dictation proceeds without selection/window/field context.
+    private static let axCaptureTimeout: TimeInterval = 1.0
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
@@ -49,6 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.handleKeyUp() }
         }
         hotkey.register()
+        clipboard.start()
+
+        // Load the user's vocabulary (writes an example file on first run) and feed
+        // its canonical terms to the smart processor as bias hints.
+        vocabulary = VocabularyStore.loadCreatingExampleIfNeeded()
+        smart = SmartProcessor(vocabTerms: vocabulary.hintTerms)
 
         // Kick off model asset preparation; reflect progress in the menu.
         Task { [weak self] in
@@ -56,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try await self?.engine.prepare { message in
                     Task { @MainActor in self?.setStatus(message) }
                 }
+                await MainActor.run { self?.reflectReadyStatus() }
             } catch {
                 await MainActor.run { self?.setStatus("Speech unavailable: \(error)") }
             }
@@ -65,7 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.unregister()
         removeEscMonitor()
+        axCaptureTask?.cancel()
         recorder.stop()
+        clipboard.stop()
+    }
+
+    /// "Ready", noting when smart cleanup is degraded to raw (Apple Intelligence
+    /// off, etc.) — DESIGN.md §6's one-line degradation notice.
+    private func reflectReadyStatus() {
+        if let note = SmartProcessor.unavailableNote {
+            setStatus("Ready — smart cleanup off (\(note))")
+        } else {
+            setStatus("Ready")
+        }
     }
 
     // MARK: Hotkey → intent
@@ -88,11 +126,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
+    /// Fold the off-main AX read into the current context, unless a newer recording
+    /// has since started (generation mismatch).
+    private func mergeAccessibilityContext(_ accessibility: AccessibilityContext, generation: Int) {
+        guard generation == recordingGeneration else { return }
+        context.merge(accessibility)
+    }
+
     // MARK: Dictation loop
 
     private func startRecording() {
         guard phase == .idle else { return }
         guard ensureMicrophoneAuthorized() else { return }
+
+        // Recording must start immediately — capture only the cheap context (app,
+        // bundle, date) synchronously. The AX pieces (selection/window/field) are
+        // read off the main thread and merged in when ready; they never gate start.
+        contextStartUptime = now
+        recordingGeneration += 1
+        let generation = recordingGeneration
+        context = ContextSnapshot.captureImmediate()
+        axCaptureTask?.cancel()
+        axCaptureTask = Task { [weak self] in
+            let accessibility = await AccessibilityContext.capture(timeout: AppDelegate.axCaptureTimeout)
+            await MainActor.run { self?.mergeAccessibilityContext(accessibility, generation: generation) }
+        }
 
         phase = .starting
         cancelRequestedDuringStart = false
@@ -146,37 +204,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         teardownAudioCallbacks()
         recorder.stop()
         removeEscMonitor()
+        axCaptureTask?.cancel()
         sounds.play(.stop)
         hud.update(.transcribing)
         setRecordingIcon(false)
         setStatus("Transcribing…")
 
+        // ⇧ held at stop → raw escape (skip smart processing). Read now, before the
+        // async work, while the modifier is still down.
+        let shiftHeld = NSEvent.modifierFlags.contains(.shift)
+
+        // Resolve the clipboard piece now: include it if it changed from just before
+        // record start through now (i.e. during recording too). Bind immutably so it
+        // can cross into the concurrent processing closure.
+        let snapshot: ContextSnapshot = {
+            var s = context
+            s.clipboard = clipboard.textChanged(since: contextStartUptime - clipboardWindow)
+            return s
+        }()
+
         Task { @MainActor in
             defer { phase = .idle }
+            let raw: String
             do {
-                let raw = try await engine.finishSession()
-                let text = try await postProcessor.process(raw)
-                guard !text.isEmpty else {
-                    setStatus("No speech detected.")
-                    hud.hide()
-                    return
-                }
-                switch injector.inject(text) {
-                case .pasted:
-                    setStatus("Pasted \(text.count) chars.")
-                    flashDoneThenHide()
-                case .refusedSecureInput:
-                    NSLog("Sotto: secure input active — left transcript on clipboard.")
-                    setStatus("Secure field — copied to clipboard.")
-                    flashDoneThenHide()
-                case .empty:
-                    setStatus("No speech detected.")
-                    hud.hide()
-                }
+                raw = try await engine.finishSession()
             } catch {
                 setStatus("Transcription failed: \(error)")
                 showError("Transcription failed")
+                return
             }
+
+            let rewritten = vocabulary.rewrite(raw)
+            guard !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                setStatus("No speech detected.")
+                hud.hide()
+                return
+            }
+
+            let smartAvailable = SmartProcessor.isAvailable
+            let goingSmart = pipeline.policy.route(
+                shiftHeld: shiftHeld,
+                smartAvailable: smartAvailable,
+                textLength: rewritten.count
+            ) == .smart
+            if goingSmart { setStatus("Polishing…") }
+
+            // Raw route runs through Passthrough (no model call). Smart route may
+            // fail: a transform-attempt failure yields `.transformFailed` and we do
+            // NOT paste — leaving the selection untouched rather than clobbering it
+            // with the spoken command. A dictate failure yields `.paste` of the raw
+            // transcript (never lose the paste, DESIGN.md §3).
+            let outcome = await pipeline.run(
+                text: rewritten,
+                context: snapshot,
+                shiftHeld: shiftHeld,
+                smartAvailable: smartAvailable,
+                smart: smart,
+                raw: rawProcessor
+            )
+
+            switch outcome {
+            case .transformFailed:
+                NSLog("Sotto: transform attempt failed — selection left unchanged.")
+                setStatus("Transform failed — selection unchanged.")
+                showError("Transform failed — selection left as-is")
+            case .paste(let text):
+                paste(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+    }
+
+    /// Inject the final text and reflect the result on the HUD + status line.
+    private func paste(_ output: String) {
+        guard !output.isEmpty else {
+            setStatus("No speech detected.")
+            hud.hide()
+            return
+        }
+        switch injector.inject(output) {
+        case .pasted:
+            setStatus("Pasted \(output.count) chars.")
+            flashDoneThenHide()
+        case .refusedSecureInput:
+            NSLog("Sotto: secure input active — left transcript on clipboard.")
+            setStatus("Secure field — copied to clipboard.")
+            flashDoneThenHide()
+        case .empty:
+            setStatus("No speech detected.")
+            hud.hide()
         }
     }
 
@@ -203,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         teardownAudioCallbacks()
         recorder.stop()
         removeEscMonitor()
+        axCaptureTask?.cancel()
         if playSound { sounds.play(.cancel) }
         setRecordingIcon(false)
         setStatus("Cancelled.")
@@ -329,8 +445,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func promptForAccessibilityTrust() {
         // Needed to post the synthetic ⌘V CGEvent. Prompts the user once.
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options = [key: true] as CFDictionary
+        // The key is kAXTrustedCheckOptionPrompt's value, used as a literal to avoid
+        // the imported global var (not concurrency-safe under Swift 6).
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         if !AXIsProcessTrustedWithOptions(options) {
             NSLog("Sotto: grant Accessibility in System Settings › Privacy › Accessibility to enable paste.")
         }

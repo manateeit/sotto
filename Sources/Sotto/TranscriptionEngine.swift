@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import Speech
 import os
@@ -260,7 +260,9 @@ final class BufferConverter {
         }
 
         var error: NSError?
-        var supplied = false
+        // AVAudioConverter calls this block synchronously within convert(), on this
+        // thread — so the mutation is single-threaded despite the Sendable closure.
+        nonisolated(unsafe) var supplied = false
         let status = converter.convert(to: output, error: &error) { _, inputStatus in
             defer { supplied = true }
             inputStatus.pointee = supplied ? .noDataNow : .haveData

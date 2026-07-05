@@ -1,14 +1,16 @@
 import Foundation
 
 /// The second protocol seam (see DESIGN.md §2). This is where the product's
-/// "agentic ceiling" lives: M2 adds `SmartProcessor` (Foundation Models guided
-/// generation) behind this same interface, and later Ollama / Anthropic providers.
-/// M0 ships only the raw pass-through.
+/// "agentic ceiling" lives: M2 adds `SmartProcessor` (Foundation Models) behind
+/// this same interface, and later Ollama / Anthropic providers. The processor
+/// receives the context captured at record start (selection, frontmost app,
+/// recent clipboard).
 protocol PostProcessor: Sendable {
-    func process(_ text: String) async throws -> String
+    func process(_ text: String, context: ContextSnapshot) async throws -> String
 }
 
-/// Raw transcript, unchanged. The MVP escape hatch and the M0 default.
+/// Raw transcript, unchanged. The ⇧ escape hatch and the graceful-degradation
+/// default when Foundation Models is unavailable.
 struct Passthrough: PostProcessor {
-    func process(_ text: String) async throws -> String { text }
+    func process(_ text: String, context: ContextSnapshot) async throws -> String { text }
 }
