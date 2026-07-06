@@ -49,9 +49,9 @@ private struct GitHubRelease: Decodable {
 /// identity). Reports the outcome via NSAlert.
 @MainActor
 enum UpdateChecker {
-    // ponytail: single hardcoded owner/repo constant; must be updated to match the
-    // real GitHub repo once it exists (or overridden per-build — see repo below).
-    static let defaultRepo = "chrismckenna/sotto"
+    // ponytail: single hardcoded owner/repo constant, kept in sync with the real
+    // GitHub repo (or overridden per-build — see repo below).
+    static let defaultRepo = "manateeit/sotto"
 
     /// Overridable via the app bundle's Info.plist (key `SottoUpdateRepo`), which
     /// scripts/make-app.sh can set from an env var without touching source.
