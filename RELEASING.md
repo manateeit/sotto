@@ -61,7 +61,7 @@ Apple has to scan and notarize the app before Gatekeeper will let anyone else ru
 ## 4. Publish the GitHub release
 
 ```bash
-gh repo create chrismckenna/sotto --public --source=. --remote=origin --push   # first release only
+gh repo create manateeit/sotto --public --source=. --remote=origin --push   # first release only
 git tag v0.1.0
 git push origin v0.1.0
 gh release create v0.1.0 dist/Sotto-0.1.0.dmg \

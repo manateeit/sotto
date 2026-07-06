@@ -32,7 +32,7 @@ Prebuilt DMG: coming soon — link will go here once notarized releases start.
 Until then, build from source (takes about a minute):
 
 ```bash
-git clone https://github.com/chrismckenna/sotto.git
+git clone https://github.com/manateeit/sotto.git
 cd sotto
 bash scripts/make-app.sh
 open dist/Sotto.app
