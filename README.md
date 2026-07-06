@@ -63,6 +63,18 @@ That's the entire hotkey surface. One key, two gestures, one modifier.
 
 Smart cleanup requires Apple Intelligence to be turned on (System Settings → Apple Intelligence & Siri). Without it, Sotto still works — it just always pastes raw transcripts, the same as holding ⇧.
 
+## Voice commands
+
+Start a dictation with the wake word **"Sotto"** and Sotto treats what follows as a command instead of text to paste:
+
+- **"Sotto, open Safari"** — opens an app by name, or an https address ("Sotto, open github.com").
+- **"Sotto, volume up"** — volume up, down, or mute.
+- **"Sotto, run npm test"** — types `npm test` into your terminal and stops. **Sotto never presses Return** — you do. The command only lands if a supported terminal (Terminal, iTerm2, Ghostty, Warp, kitty, Alacritty, VS Code) is frontmost.
+
+Nothing runs on its own. When a command is recognized, a violet pill shows what will happen ("⏎ Terminal: npm test — ⌥Space to run · Esc to cancel"); it runs only when you re-tap ⌥Space, and Esc (or waiting 10 seconds) cancels it with nothing changed. If Sotto can't make sense of the command, it says "Didn't catch a command" and does nothing — the wake word only ever does something when a command actually parses.
+
+Everything without the wake word is dictated exactly as before, so a sentence that isn't a command is never mistaken for one. Holding ⇧ on stop skips wake-word detection entirely (raw means raw). Parsing runs on-device with Apple's Foundation Models — no network, same privacy story as dictation. Turn the whole feature off with **Voice commands** in Settings.
+
 Everything else lives in the menu bar dropdown:
 
 - **Settings…** — hotkey rebinding, sounds, smart cleanup toggle, launch at login, and a History tab (retention period, keep/discard audio, browse/reveal the JSONL + WAV files, Delete All)

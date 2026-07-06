@@ -2,12 +2,16 @@ import AppKit
 import SwiftUI
 
 /// What the HUD is currently showing. Colour language from DESIGN.md:
-/// recording = red, processing = blue, done = green.
+/// recording = red, processing = blue, done = green. M6 adds command confirmation =
+/// violet (a distinct state: the app is waiting on the human, not working).
 enum HUDState: Equatable {
     case recording
     case transcribing
     case done
     case error(String)
+    /// Awaiting an explicit confirm for a parsed voice command. The associated value
+    /// is the full pill text (summary + "⌥Space to run · Esc to cancel").
+    case confirming(String)
 
     var dotColor: Color {
         switch self {
@@ -15,8 +19,13 @@ enum HUDState: Equatable {
         case .transcribing: return .blue
         case .done: return .green
         case .error: return .yellow
+        case .confirming: return HUDState.violet
         }
     }
+
+    /// The command-confirmation accent (violet), distinct from the record/process/done
+    /// language so a pending action never reads as "working".
+    static let violet = Color(red: 0.55, green: 0.35, blue: 0.95)
 
     var label: String {
         switch self {
@@ -24,6 +33,7 @@ enum HUDState: Equatable {
         case .transcribing: return "Transcribing…"
         case .done: return "Done"
         case .error(let message): return message
+        case .confirming(let text): return text
         }
     }
 

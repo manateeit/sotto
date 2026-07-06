@@ -10,6 +10,7 @@ final class Settings: ObservableObject {
     enum Key {
         static let sounds = "sotto.soundsEnabled"
         static let smartCleanup = "sotto.smartCleanupEnabled"
+        static let voiceCommands = "sotto.voiceCommandsEnabled"
         static let historyEnabled = "sotto.historyEnabled"
         static let keepAudio = "sotto.keepAudio"
         static let retentionDays = "sotto.historyRetentionDays"
@@ -22,6 +23,9 @@ final class Settings: ObservableObject {
 
     @Published var soundsEnabled: Bool { didSet { defaults.set(soundsEnabled, forKey: Key.sounds) } }
     @Published var smartCleanupEnabled: Bool { didSet { defaults.set(smartCleanupEnabled, forKey: Key.smartCleanup) } }
+    /// Whether a spoken "Sotto, …" wake word routes to the command flow. OFF skips
+    /// the prefix check entirely — dictation behaves exactly as before M6 (DESIGN.md §3).
+    @Published var voiceCommandsEnabled: Bool { didSet { defaults.set(voiceCommandsEnabled, forKey: Key.voiceCommands) } }
     @Published var historyEnabled: Bool { didSet { defaults.set(historyEnabled, forKey: Key.historyEnabled) } }
     @Published var keepAudio: Bool { didSet { defaults.set(keepAudio, forKey: Key.keepAudio) } }
     @Published var historyRetentionDays: Int { didSet { defaults.set(historyRetentionDays, forKey: Key.retentionDays) } }
@@ -40,6 +44,7 @@ final class Settings: ObservableObject {
         defaults.register(defaults: [
             Key.sounds: true,
             Key.smartCleanup: true,
+            Key.voiceCommands: true,
             Key.historyEnabled: true,
             Key.keepAudio: true,
             Key.retentionDays: HistoryStore.defaultRetentionDays,
@@ -49,6 +54,7 @@ final class Settings: ObservableObject {
         ])
         soundsEnabled = defaults.bool(forKey: Key.sounds)
         smartCleanupEnabled = defaults.bool(forKey: Key.smartCleanup)
+        voiceCommandsEnabled = defaults.bool(forKey: Key.voiceCommands)
         historyEnabled = defaults.bool(forKey: Key.historyEnabled)
         keepAudio = defaults.bool(forKey: Key.keepAudio)
         historyRetentionDays = defaults.integer(forKey: Key.retentionDays)

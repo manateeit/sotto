@@ -89,6 +89,8 @@ Cleanup contract: fix punctuation/casing/paragraphs, drop filler ("um", false st
 
 **Raw escape hatch**: hold ⇧ when stopping → skip post-processing entirely. Also auto-skip when Foundation Models is unavailable (Apple Intelligence off) or the recording exceeds a length cap — paste fast, never hostage the user to a slow model.
 
+**Voice commands** (M6): commands ride the same ⌥Space flow. After transcription + vocabulary rewrite, a deterministic prefix check looks for the spoken wake word "Sotto" (first word only, fuzzy STT variants accepted). No wake word → the dictate/transform pipeline above runs byte-for-byte unchanged (a prefix check is the only added cost); ⇧-raw bypasses the check entirely. With the wake word, the stripped utterance is parsed by one Foundation Models call — a **parser only**, never an attached tool (attached tools auto-invoke before a human confirms, which is forbidden). A curated map of *universal* phrases ("open …", "volume up/down/mute", "type/run …") resolves without any model call. The typed result routes to one of three commands behind the `VoiceCommand` seam — open an app/https-URL (tier 0), volume up/down/mute via CoreAudio (tier 0), or paste text into an allowlisted terminal and **never press Return** (tier 1, the human's Return is the execution gate). Every command — tier 0 included — shows a violet confirm pill and does nothing until the user re-taps ⌥Space (Esc or a 10 s timeout cancels, leaving the world untouched). Unknown / low-confidence / model-unavailable → "Didn't catch a command", nothing runs. Off by default? No — on by default, one toggle to disable. Parsing is on-device; nothing about commands changes the privacy story.
+
 That's the whole product surface. Per-app behavior overrides only if real usage demands them.
 
 ---
@@ -159,7 +161,7 @@ Rough shape: ~2–4 k LOC Swift. M0 is a day-scale task; each later milestone is
 
 ## 7. Post-MVP roadmap (ordered)
 
-1. **Agentic voice commands** — Foundation Models tool calling: "open the pull request tab", "run the tests", Claude Code / terminal dictation profile. The reason the PostProcessor seam exists.
+1. ✅ **Agentic voice commands** — v1 shipped (M6): spoken "Sotto, …" wake word → on-device FM parse (classify-only) → violet confirm pill → dispatch behind the `VoiceCommand` seam (open app/URL, volume, type-into-terminal). See §3. The reason the PostProcessor seam exists. Next: more command kinds, media keys, per-terminal profiles.
 2. **Provider plug-ins** — Ollama + Anthropic/OpenAI/Groq behind PostProcessor (BYO keys, off by default); Parakeet + optional cloud STT behind TranscriptionEngine.
 3. **Realtime on-screen transcript** (SpeechAnalyzer streams natively).
 4. **Reprocess from history**, file transcription (drag audio onto menu bar icon).

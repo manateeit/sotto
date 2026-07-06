@@ -48,6 +48,7 @@ private struct GeneralTab: View {
             Divider()
             Toggle("Play start / stop / cancel sounds", isOn: $settings.soundsEnabled)
             Toggle("Smart cleanup (Apple Intelligence)", isOn: $settings.smartCleanupEnabled)
+            Toggle("Voice commands (say “Sotto, …”)", isOn: $settings.voiceCommandsEnabled)
             Toggle("Launch Sotto at login", isOn: $settings.launchAtLogin)
 
             Divider()

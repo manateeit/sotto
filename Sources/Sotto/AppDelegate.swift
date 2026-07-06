@@ -15,6 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var smart = SmartProcessor()
     private let rawProcessor: PostProcessor = Passthrough()
     private let pipeline = ProcessingPipeline()
+    // M6 command subsystem: parse (FM, behind the CommandParsing seam) → human
+    // confirm → dispatch through the VoiceCommand seam. The FM is a PARSER ONLY.
+    private let commandParser: any CommandParsing = SmartCommandParser()
+    private let commandPipeline = CommandPipeline()
+    private lazy var commandRegistry = CommandRegistry(injector: injector)
     private let clipboard = ClipboardMonitor()
     private let injector = OutputInjector()
     private let hud = HUDController()
@@ -52,17 +57,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenuItem: NSMenuItem?
 
     /// Lifecycle of one dictation. `starting` covers the async engine/mic spin-up
-    /// so a stop or cancel arriving during it can be honored.
+    /// so a stop or cancel arriving during it can be honored. `confirmingCommand`
+    /// (M6) is the window where a parsed voice command waits on an explicit human
+    /// re-tap before anything executes.
     private enum Phase {
         case idle
         case starting
         case recording
         case finishing
+        case confirmingCommand
     }
     private var phase: Phase = .idle
     private var cancelRequestedDuringStart = false
     private var hudDismissWork: DispatchWorkItem?
     private var escMonitor: Any?
+
+    /// A parsed voice command staged and awaiting the human confirm (M6).
+    private struct PendingCommand {
+        let command: any VoiceCommand
+        let argument: String
+        /// The full raw transcript (with wake word), for history.
+        let utterance: String
+        let summary: String
+        let snapshot: ContextSnapshot
+    }
+    private var pendingCommand: PendingCommand?
+    private var confirmTimeoutWork: DispatchWorkItem?
+    private var confirmEscMonitor: Any?
+    // ponytail: 10s confirm window — a named constant, not exposed in settings.
+    private static let confirmTimeout: TimeInterval = 10
 
     private var isActive: Bool { phase == .starting || phase == .recording }
 
@@ -192,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.unregister()
         removeEscMonitor()
+        cancelConfirmMonitors()
         axCaptureTask?.cancel()
         recorder.stop()
         clipboard.stop()
@@ -212,10 +236,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Hotkey → intent
 
     private func handleKeyDown() {
-        apply(gesture.keyDown(at: now, isRecording: isActive))
+        // M6 phase-machine branch: while a command awaits confirmation the SAME key
+        // confirms it rather than starting a new recording.
+        switch HotkeyRouting.keyDownAction(confirmingCommand: phase == .confirmingCommand) {
+        case .confirmCommand:
+            confirmPendingCommand()
+        case .gesture:
+            apply(gesture.keyDown(at: now, isRecording: isActive))
+        }
     }
 
     private func handleKeyUp() {
+        // The confirm fires on key-down; swallow its release so it never reaches the
+        // dictation gesture.
+        if phase == .confirmingCommand { return }
         apply(gesture.keyUp(at: now, isRecording: isActive))
     }
 
@@ -304,7 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cancelRequestedDuringStart = true
         case .recording:
             finishRecording()
-        case .idle, .finishing:
+        case .idle, .finishing, .confirmingCommand:
+            // .confirmingCommand never reaches here — ⌥Space is intercepted as a
+            // confirm before the gesture runs.
             break
         }
     }
@@ -334,7 +370,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }()
 
         Task { @MainActor in
-            defer { phase = .idle }
+            // Command flow hands off to the confirm phase and must NOT be reset to
+            // idle by this defer; every other path returns to idle here.
+            var handedOffToConfirm = false
+            defer { if !handedOffToConfirm { phase = .idle } }
             let raw: String
             do {
                 raw = try await engine.finishSession()
@@ -348,6 +387,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 setStatus("No speech detected.")
                 hud.hide()
+                return
+            }
+
+            // M6: spoken wake-word command branch. ⇧-raw bypasses it entirely (raw
+            // means raw); the setting can disable it; otherwise a first-word "Sotto"
+            // routes to the command flow with the wake word stripped. With no wake
+            // word, the existing dictate/transform pipeline below runs unchanged — the
+            // only added cost on that path is this one prefix check.
+            if !shiftHeld, settings.voiceCommandsEnabled, let utterance = WakeWord.command(in: rewritten) {
+                handedOffToConfirm = await beginCommandFlow(
+                    utterance: utterance, rawTranscript: raw, snapshot: snapshot)
                 return
             }
 
@@ -446,7 +496,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cancelRequestedDuringStart = true
         case .recording:
             performCancel(playSound: true)
-        case .idle, .finishing:
+        case .idle, .finishing, .confirmingCommand:
+            // The confirm phase has its own Esc handler (cancelPendingCommand).
             break
         }
     }
@@ -472,6 +523,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func teardownAudioCallbacks() {
         recorder.onBuffer = nil
         recorder.onLevel = nil
+    }
+
+    // MARK: Voice commands (M6)
+
+    /// Recognize and STAGE a spoken command (never execute — a human confirm is
+    /// required). Returns true when it entered the confirm phase (the caller must not
+    /// reset the phase to idle); false when it resolved immediately (nothing staged).
+    /// Parsing is literal-leaning: unknown / low-confidence / FM-unavailable all end
+    /// as "Didn't catch a command" and nothing runs.
+    private func beginCommandFlow(utterance: String, rawTranscript: String, snapshot: ContextSnapshot) async -> Bool {
+        setStatus("Understanding…")
+        let plan = await commandPipeline.plan(utterance: utterance, parser: commandParser)
+        guard case .execute(let parsed) = plan, let command = commandRegistry.command(for: parsed.kind) else {
+            setStatus("Didn't catch a command.")
+            showError("Didn't catch a command")
+            return false
+        }
+        let context = CommandContext(frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        guard command.canRun(context: context) else {
+            showError(canRunFailureMessage(for: command))
+            return false
+        }
+        let summary = command.summary(argument: parsed.argument)
+        pendingCommand = PendingCommand(
+            command: command, argument: parsed.argument,
+            utterance: rawTranscript, summary: summary, snapshot: snapshot)
+        phase = .confirmingCommand
+        hud.show(.confirming("\(summary) — ⌥Space to run · Esc to cancel"))
+        setStatus("Confirm: \(summary)")
+        installConfirmMonitors()
+        return true
+    }
+
+    /// The human confirmed (⌥Space during the confirm phase): run the staged command.
+    private func confirmPendingCommand() {
+        guard phase == .confirmingCommand, let pending = pendingCommand else { return }
+        cancelConfirmMonitors()
+        pendingCommand = nil
+        phase = .finishing
+        hud.update(.transcribing)
+        setStatus("Running…")
+
+        Task { @MainActor in
+            defer { phase = .idle }
+            // Defensive re-check: the frontmost app could have changed since the pill
+            // appeared. A terminal paste must still land in a terminal.
+            let context = CommandContext(frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            guard pending.command.canRun(context: context) else {
+                showError(canRunFailureMessage(for: pending.command))
+                return
+            }
+            do {
+                try await pending.command.run(argument: pending.argument)
+                setStatus("Ran: \(pending.summary)")
+                flashDoneThenHide()
+                recordCommandHistory(pending)
+            } catch {
+                NSLog("Sotto: command failed: \(error)")
+                showError(runFailureMessage(for: error, command: pending.command))
+            }
+        }
+    }
+
+    /// Esc or the 10s timeout: cancel the staged command. The world is left untouched
+    /// — nothing was ever executed. History is NOT recorded for a cancelled command.
+    private func cancelPendingCommand(reason: String) {
+        guard phase == .confirmingCommand else { return }
+        cancelConfirmMonitors()
+        pendingCommand = nil
+        phase = .idle
+        setStatus(reason)
+        hud.hide()
+    }
+
+    private func installConfirmMonitors() {
+        installConfirmEscMonitor()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.cancelPendingCommand(reason: "Command timed out.") }
+        }
+        confirmTimeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.confirmTimeout, execute: work)
+    }
+
+    private func cancelConfirmMonitors() {
+        confirmTimeoutWork?.cancel()
+        confirmTimeoutWork = nil
+        removeConfirmEscMonitor()
+    }
+
+    /// Esc-to-cancel during the confirm phase — a passive global monitor, same shape
+    /// as the recording Esc monitor. Requires Accessibility trust; without it the 10s
+    /// timeout still cancels.
+    private func installConfirmEscMonitor() {
+        guard confirmEscMonitor == nil else { return }
+        guard AXIsProcessTrusted() else {
+            NSLog("Sotto: Esc-to-cancel-command needs Accessibility trust; 10s timeout still applies.")
+            return
+        }
+        confirmEscMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return } // 53 = Escape
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.cancelPendingCommand(reason: "Cancelled.") }
+            }
+        }
+    }
+
+    private func removeConfirmEscMonitor() {
+        if let confirmEscMonitor { NSEvent.removeMonitor(confirmEscMonitor) }
+        confirmEscMonitor = nil
+    }
+
+    /// Short reason shown when a command can't run in the current environment.
+    private func canRunFailureMessage(for command: any VoiceCommand) -> String {
+        switch command.id {
+        case "terminal": return "Front app isn't a terminal"
+        default: return "Can't run that command here"
+        }
+    }
+
+    /// Short reason shown when a confirmed command threw.
+    private func runFailureMessage(for error: Error, command: any VoiceCommand) -> String {
+        guard let commandError = error as? CommandError else { return "Command failed" }
+        switch commandError {
+        case .targetNotFound(let target): return "Couldn't find \(target)"
+        case .unsupported: return "Can't do that yet"
+        case .injectionRefused: return "Couldn't type into the terminal"
+        }
+    }
+
+    /// Record an executed command to open history with route "command" (reusing
+    /// HistoryStore). Never called for a cancelled/timed-out command.
+    private func recordCommandHistory(_ pending: PendingCommand) {
+        guard settings.historyEnabled else { return }
+        let id = currentEntryID ?? UUID().uuidString
+        let audioFile = settings.keepAudio ? "\(id).wav" : nil
+        HistoryStore.append(HistoryEntry(
+            id: id,
+            date: recordStartDate,
+            rawTranscript: pending.utterance,
+            finalOutput: pending.summary,
+            route: "command",
+            app: pending.snapshot.frontmostApp,
+            bundleID: pending.snapshot.bundleID,
+            durationSeconds: Date().timeIntervalSince(recordStartDate),
+            engineID: "SpeechAnalyzer",
+            audioFile: audioFile
+        ))
     }
 
     // MARK: Error surfacing + HUD dismissal
