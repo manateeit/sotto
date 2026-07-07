@@ -868,4 +868,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("Sotto: grant Accessibility in System Settings › Privacy › Accessibility to enable paste.")
         }
     }
+
+    // MARK: Reprocessing (for history re-transcription)
+
+    /// Re-transcribe a WAV from history and post-process it.
+    /// Returns (rawTranscript, cleanedOutput, route) or nil if the audio file is missing.
+    func reprocessEntry(withID entryID: String) async -> (raw: String, cleaned: String, route: String)? {
+        let audioURL = HistoryStore.audioURL(forID: entryID)
+        guard FileManager.default.fileExists(atPath: audioURL.path) else { return nil }
+
+        do {
+            let inputFile = try AVAudioFile(forReading: audioURL)
+            let format = inputFile.processingFormat
+            let engine = SpeechAnalyzerEngine()
+
+            try await engine.beginSession()
+
+            let frameSize = 4096
+            let totalFrames = Int(inputFile.length)
+            var currentFrame = 0
+
+            while currentFrame < totalFrames {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameSize)) else { break }
+                let framesToRead = min(frameSize, totalFrames - currentFrame)
+                try inputFile.read(into: buffer, frameCount: AVAudioFrameCount(framesToRead))
+                engine.append(buffer)
+                currentFrame += framesToRead
+            }
+
+            let rawTranscript = try await engine.finishSession()
+            let rewritten = vocabulary.rewrite(rawTranscript)
+
+            let smartAvailable = SmartProcessor.isAvailable && settings.smartCleanupEnabled
+            let outcome = await pipeline.run(
+                text: rewritten,
+                context: ContextSnapshot(),  // Empty context for reprocessing
+                shiftHeld: false,  // Reprocessing defaults to smart route
+                smartAvailable: smartAvailable,
+                smart: smart,
+                raw: rawProcessor
+            )
+
+            switch outcome {
+            case .paste(let text, let route):
+                return (raw: rawTranscript, cleaned: text, route: route)
+            case .transformFailed:
+                return (raw: rawTranscript, cleaned: rewritten, route: "raw")
+            }
+        } catch {
+            NSLog("Reprocess error: \(error)")
+            return nil
+        }
+    }
 }

@@ -169,6 +169,9 @@ private struct EditableRule: Identifiable {
 
 private struct HistoryTab: View {
     @State private var entries: [HistoryEntry] = []
+    @State private var reprocessingID: String?
+    @State private var reprocessResult: (raw: String, cleaned: String, route: String)?
+    @State private var showReprocessAlert = false
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -184,26 +187,72 @@ private struct HistoryTab: View {
                 }
             }
             List(entries) { entry in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.finalOutput).lineLimit(2)
-                    HStack {
-                        Text(entry.date, style: .date).font(.caption).foregroundStyle(.secondary)
-                        if let app = entry.app {
-                            Text(app).font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.finalOutput).lineLimit(2)
+                        HStack {
+                            Text(entry.date, style: .date).font(.caption).foregroundStyle(.secondary)
+                            if let app = entry.app {
+                                Text(app).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text(entry.route).font(.caption).foregroundStyle(.secondary)
                         }
-                        Text(entry.route).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { copy(entry.finalOutput) }
+                    Spacer()
+                    if entry.audioFile != nil {
+                        Button(action: { reprocess(entry) }) {
+                            if reprocessingID == entry.id {
+                                ProgressView().scaleEffect(0.8)
+                            } else {
+                                Text("Reprocess")
+                            }
+                        }
+                        .disabled(reprocessingID != nil)
                     }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { copy(entry.finalOutput) }
             }
         }
         .padding()
         .onAppear { entries = HistoryStore.load().reversed() }
+        .alert("Reprocessed Transcript", isPresented: $showReprocessAlert) {
+            Button("Copy Cleaned", action: {
+                if let result = reprocessResult {
+                    copy(result.cleaned)
+                    showReprocessAlert = false
+                }
+            })
+            Button("Copy Raw", action: {
+                if let result = reprocessResult {
+                    copy(result.raw)
+                    showReprocessAlert = false
+                }
+            })
+            Button("Close") { showReprocessAlert = false }
+        } message: {
+            if let result = reprocessResult {
+                Text(result.cleaned)
+            }
+        }
     }
 
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func reprocess(_ entry: HistoryEntry) {
+        reprocessingID = entry.id
+        Task {
+            if let delegate = NSApplication.shared.delegate as? AppDelegate {
+                let result = await delegate.reprocessEntry(withID: entry.id)
+                await MainActor.run {
+                    reprocessingID = nil
+                    reprocessResult = result
+                    showReprocessAlert = true
+                }
+            }
+        }
     }
 }
