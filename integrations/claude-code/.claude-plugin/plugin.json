@@ -1,0 +1,16 @@
+{
+  "name": "sotto-voice",
+  "displayName": "Sotto — Voice replies",
+  "version": "0.1.0",
+  "description": "Answer Claude Code by voice. When the agent finishes a turn, Sotto pops up, you speak, and your words become the next turn — transcribed on-device, nothing executed automatically.",
+  "author": {
+    "name": "Sotto",
+    "email": "mtopher@gmail.com"
+  },
+  "homepage": "https://github.com/manateeit/sotto",
+  "repository": "https://github.com/manateeit/sotto",
+  "license": "MIT",
+  "keywords": ["voice", "dictation", "on-device", "sotto"],
+  "hooks": "./hooks/hooks.json",
+  "defaultEnabled": false
+}

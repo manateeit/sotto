@@ -309,11 +309,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleReplyRequest(_ request: ReplyBridge.Request) {
+        // Declining still writes an empty response so the agent's hook unblocks
+        // immediately instead of polling until its timeout.
         guard settings.agentRepliesEnabled else {
+            _ = ReplyBridge.write("", toPath: request.responsePath)
             NSLog("Sotto: ignoring sotto://reply — enable Agents in Settings › General.")
             return
         }
         guard phase == .idle else {
+            _ = ReplyBridge.write("", toPath: request.responsePath)
             NSLog("Sotto: busy — ignoring agent reply request.")
             return
         }
@@ -620,7 +624,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelArmed = false
         cancelDisarmWork?.cancel()
         cancelDisarmWork = nil
-        replyResponsePath = nil // cancelled reply writes nothing; the hook times out
+        // A cancelled reply writes an empty response so the agent's hook unblocks
+        // at once (empty = "no reply", the hook injects nothing).
+        if let path = replyResponsePath { _ = ReplyBridge.write("", toPath: path) }
+        replyResponsePath = nil
         teardownAudioCallbacks()
         recorder.stop()
         removeEscMonitor()
