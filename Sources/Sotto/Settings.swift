@@ -21,6 +21,8 @@ final class Settings: ObservableObject {
         static let clipboardHistory = "sotto.clipboardHistoryEnabled"
         static let clipboardDisclosureSeen = "sotto.clipboardDisclosureSeen"
         static let domainProfile = "sotto.domainProfile"
+        static let modelProvider = "sotto.modelProvider"
+        static let ollamaModel = "sotto.ollamaModel"
     }
 
     private let defaults: UserDefaults
@@ -52,6 +54,12 @@ final class Settings: ObservableObject {
     /// on-device cleanup as a bias hint so ambiguous words resolve toward their
     /// domain — never rewrites meaning. Empty = no domain bias (default).
     @Published var domainProfile: String { didSet { defaults.set(domainProfile, forKey: Key.domainProfile) } }
+    /// Which model runs cleanup: "none" (on-device Foundation Models, default) or
+    /// "ollama" (local). Cloud providers land in a later milestone. Selecting a
+    /// non-"none" provider is the ONLY thing that constructs a network-capable path.
+    @Published var modelProvider: String { didSet { defaults.set(modelProvider, forKey: Key.modelProvider) } }
+    /// The Ollama model id (e.g. "llama3.1:8b"), used only when modelProvider == "ollama".
+    @Published var ollamaModel: String { didSet { defaults.set(ollamaModel, forKey: Key.ollamaModel) } }
     /// Reflects SMAppService; the didSet applies the change to the system.
     @Published var launchAtLogin: Bool { didSet { applyLaunchAtLogin() } }
     /// Transient UI feedback if a hotkey couldn't be registered (not persisted).
@@ -72,7 +80,9 @@ final class Settings: ObservableObject {
             Key.agentReplies: false,
             Key.clipboardHistory: false,
             Key.clipboardDisclosureSeen: false,
-            Key.domainProfile: ""
+            Key.domainProfile: "",
+            Key.modelProvider: ModelProvider.none.rawValue,
+            Key.ollamaModel: ""
         ])
         soundsEnabled = defaults.bool(forKey: Key.sounds)
         smartCleanupEnabled = defaults.bool(forKey: Key.smartCleanup)
@@ -87,6 +97,8 @@ final class Settings: ObservableObject {
         clipboardHistoryEnabled = defaults.bool(forKey: Key.clipboardHistory)
         clipboardDisclosureSeen = defaults.bool(forKey: Key.clipboardDisclosureSeen)
         domainProfile = defaults.string(forKey: Key.domainProfile) ?? ""
+        modelProvider = defaults.string(forKey: Key.modelProvider) ?? ModelProvider.none.rawValue
+        ollamaModel = defaults.string(forKey: Key.ollamaModel) ?? ""
         launchAtLogin = LoginItem.isEnabled // didSet does not fire during init
     }
 

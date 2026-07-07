@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var vocabulary = VocabularyRewriter.empty
     private var smart = SmartProcessor()
     private let rawProcessor: PostProcessor = Passthrough()
+    /// The external-model cleanup processor (Ollama, later cloud). nil unless the
+    /// user picked a provider — so with the default `.none` NO network-capable
+    /// object is ever constructed. Built only in `reloadProvider()`.
+    private var llm: (any PostProcessor)?
     private let pipeline = ProcessingPipeline()
     // M6 command subsystem: parse (FM, behind the CommandParsing seam) → human
     // confirm → dispatch through the VoiceCommand seam. The FM is a PARSER ONLY.
@@ -199,9 +203,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] enabled in self?.applyClipboardHistory(enabled: enabled) }
             .store(in: &cancellables)
 
-        // Keep the cleanup processor's domain bias in sync as the user edits it.
+        // Keep the cleanup processors' domain bias in sync as the user edits it.
         settings.$domainProfile
-            .sink { [weak self] profile in self?.smart.domainProfile = profile }
+            .sink { [weak self] profile in
+                guard let self else { return }
+                self.smart.domainProfile = profile
+                self.reloadProvider() // rebuild the external processor with the new bias
+            }
+            .store(in: &cancellables)
+
+        // Build/tear down the external-model processor live as the user changes the
+        // provider or model. Flipping back to "none" sets llm = nil (teardown), so
+        // the network path becomes unreachable again without a restart.
+        settings.$modelProvider.dropFirst()
+            .sink { [weak self] _ in self?.reloadProvider(); self?.reflectReadyStatus() }
+            .store(in: &cancellables)
+        settings.$ollamaModel.dropFirst()
+            .sink { [weak self] _ in self?.reloadProvider() }
             .store(in: &cancellables)
 
         // Coalesce the two properties (a hotkey change sets both) into one rebind.
@@ -264,6 +282,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         vocabulary = VocabularyStore.loadCreatingExampleIfNeeded()
         smart = SmartProcessor(vocabTerms: vocabulary.hintTerms)
         smart.domainProfile = settings.domainProfile // survive the processor recreate
+        reloadProvider() // the external processor uses the same vocab + domain bias
+    }
+
+    /// Build (or tear down) the external-model processor. THE ONLY site that
+    /// constructs a network-capable backend — and only when a provider is selected.
+    /// With `provider == .none` (default) `llm` stays nil and nothing can egress.
+    private func reloadProvider() {
+        let provider = ModelProvider(rawValue: settings.modelProvider) ?? .none
+        guard let backend = ProviderFactory.make(provider: provider, ollamaModel: settings.ollamaModel) else {
+            llm = nil
+            return
+        }
+        llm = LLMPostProcessor(backend: backend,
+                               vocabTerms: vocabulary.hintTerms,
+                               domainProfile: settings.domainProfile)
+    }
+
+    /// The cleanup processor in force: the external model if configured, else the
+    /// on-device SmartProcessor. When `llm` is nil this is a network-silent value,
+    /// so even a routing bug can't reach a socket.
+    private var activeSmart: any PostProcessor { llm ?? smart }
+
+    /// Whether the smart route is available: honored only when the user hasn't
+    /// turned cleanup off; a configured provider counts as available.
+    private var activeSmartAvailable: Bool {
+        guard settings.smartCleanupEnabled else { return false }
+        return llm != nil || SmartProcessor.isAvailable
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -278,6 +323,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// "Ready", noting when smart cleanup is degraded to raw (Apple Intelligence
     /// off, etc.) — DESIGN.md §6's one-line degradation notice.
     private func reflectReadyStatus() {
+        // A configured external provider is always announced — the user must know
+        // which model runs cleanup, and (for anything but on-device) where text goes.
+        if llm != nil, ModelProvider(rawValue: settings.modelProvider) == .ollama {
+            setStatus("Ready — Local model (Ollama)")
+            return
+        }
         if !settings.smartCleanupEnabled {
             setStatus("Ready — smart cleanup off")
         } else if let note = SmartProcessor.unavailableNote {
@@ -507,10 +558,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // command, never a paste. Empty context so no transform is attempted; a
             // spoken reply is dictation to the agent, cleaned like any dictation.
             if let replyPath {
-                let smartAvailable = SmartProcessor.isAvailable && settings.smartCleanupEnabled
+                let smartAvailable = activeSmartAvailable
                 let outcome = await pipeline.run(text: rewritten, context: ContextSnapshot(),
                                                  shiftHeld: shiftHeld, smartAvailable: smartAvailable,
-                                                 smart: smart, raw: rawProcessor)
+                                                 smart: activeSmart, raw: rawProcessor)
                 let text: String
                 if case .paste(let cleaned, _) = outcome { text = cleaned } else { text = rewritten }
                 if ReplyBridge.write(text, toPath: replyPath) {
@@ -535,7 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             // Smart cleanup is used only when available AND the user hasn't turned it
             // off; otherwise route falls to raw.
-            let smartAvailable = SmartProcessor.isAvailable && settings.smartCleanupEnabled
+            let smartAvailable = activeSmartAvailable
             let goingSmart = pipeline.policy.route(
                 shiftHeld: shiftHeld,
                 smartAvailable: smartAvailable,
@@ -553,7 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 context: snapshot,
                 shiftHeld: shiftHeld,
                 smartAvailable: smartAvailable,
-                smart: smart,
+                smart: activeSmart,
                 raw: rawProcessor
             )
 
@@ -1267,13 +1318,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let rawTranscript = try await engine.finishSession()
             let rewritten = vocabulary.rewrite(rawTranscript)
 
-            let smartAvailable = SmartProcessor.isAvailable && settings.smartCleanupEnabled
+            let smartAvailable = activeSmartAvailable
             let outcome = await pipeline.run(
                 text: rewritten,
                 context: ContextSnapshot(),  // Empty context for reprocessing
                 shiftHeld: false,  // Reprocessing defaults to smart route
                 smartAvailable: smartAvailable,
-                smart: smart,
+                smart: activeSmart,
                 raw: rawProcessor
             )
 

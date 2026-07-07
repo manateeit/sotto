@@ -334,7 +334,7 @@
                     <li><strong>Little Snitch:</strong> Install Little Snitch, run Sotto, and watch the network monitor. No outbound connections (except the one optional GitHub check for updates).</li>
                     <li><strong>Console.app:</strong> Check /var/log/system.log while dictating. No DNS queries for cloud services.</li>
                     <li><strong>Terminal (nettop):</strong> Run <code>nettop -n</code> and filter by Sotto. See zero packets sent to external servers.</li>
-                    <li><strong>Source code:</strong> Read the entire codebase on GitHub. Search for "http", "https", "URLSession". The only network call is in UpdateChecker.swift, and it's off by default.</li>
+                    <li><strong>Source code:</strong> Read the entire codebase on GitHub. Search for "http", "https", "URLSession". In the default build the only network call is the explicit "Check for Updates" in UpdateChecker.swift. Optional model providers (Ollama, and bring-your-own-key cloud) live in one file — Providers.swift — and are off by default: with no provider selected, none of that code is ever constructed or reachable, so the default build stays network-silent and the Little Snitch test above holds.</li>
                 </ol>
             </div>
         </section>

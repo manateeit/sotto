@@ -60,6 +60,26 @@ private struct GeneralTab: View {
             }
 
             Section {
+                Picker("Cleanup model", selection: $settings.modelProvider) {
+                    Text("On-device (default)").tag(ModelProvider.none.rawValue)
+                    Text("Local — Ollama").tag(ModelProvider.ollama.rawValue)
+                }
+                if settings.modelProvider == ModelProvider.ollama.rawValue {
+                    TextField("Ollama model (e.g. llama3.1:8b)", text: $settings.ollamaModel)
+                }
+            } header: {
+                Text("Cleanup model")
+            } footer: {
+                if settings.modelProvider == ModelProvider.ollama.rawValue {
+                    Text("Cleanup runs on your local Ollama server at 127.0.0.1:11434 — the transcript stays on this Mac. Requires Ollama running with the model pulled.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("On-device Apple Intelligence — zero network. Choose Ollama to run a larger model locally.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
                 TextField("e.g. Cardiologist — expand clinical abbreviations",
                           text: $settings.domainProfile, axis: .vertical)
                     .lineLimit(1...3)
