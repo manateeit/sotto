@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set while reverting a rejected hotkey, so the observer doesn't re-process the
     /// reverted values (and clobber the error message).
     private var revertingHotkey = false
+    /// Raw transcript from the last successful paste, for "Undo AI edit" menu item.
+    private var lastRawTranscript: String?
 
     /// Context captured at record start; AX pieces merge in asynchronously and the
     /// clipboard field is filled at stop.
@@ -482,6 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             engineID: "SpeechAnalyzer",
             audioFile: audioFile
         ))
+        lastRawTranscript = rawTranscript
     }
 
     /// Briefly show the green "done" dot, then dismiss the HUD.
@@ -733,6 +736,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
+        let undoItem = NSMenuItem(title: "Undo Last Paste", action: #selector(undoLastPaste), keyEquivalent: "z")
+        undoItem.keyEquivalentModifierMask = [.command, .option]
+        undoItem.target = self
+        menu.addItem(undoItem)
+        menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -771,6 +779,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    /// Restore the raw (uncleaned) transcript from the last paste to clipboard.
+    @objc private func undoLastPaste() {
+        guard let raw = lastRawTranscript else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(raw, forType: .string)
+        setStatus("Raw transcript restored.")
+    }
+
     @objc private func openSettings() {
         guard phase == .idle else { setStatus("Finish dictating first — then open Settings."); return }
         windows.showSettings(settings: settings)
@@ -798,6 +814,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || menuItem.action == #selector(openPermissions)
             || menuItem.action == #selector(checkForUpdates) {
             return phase == .idle
+        }
+        if menuItem.action == #selector(undoLastPaste) {
+            return lastRawTranscript != nil
         }
         return true
     }
