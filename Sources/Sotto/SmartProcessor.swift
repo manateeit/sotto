@@ -78,6 +78,9 @@ struct ProcessingPipeline {
 struct SmartProcessor: PostProcessor {
     /// Canonical vocabulary terms passed to cleanup as bias hints.
     var vocabTerms: [String] = []
+    /// The user's field/role (e.g. "Cardiologist"), passed to cleanup so ambiguous
+    /// words resolve toward their domain. Reference-only — never rewrites meaning.
+    var domainProfile: String = ""
 
     // ponytail: hardcoded 8s per-stage model-call budget.
     static let timeout: TimeInterval = 8
@@ -186,7 +189,7 @@ struct SmartProcessor: PostProcessor {
             properties: [.init(name: "text", description: "the cleaned transcript", schema: DynamicGenerationSchema(type: String.self))]
         )
         let schema = try GenerationSchema(root: root, dependencies: [])
-        let session = LanguageModelSession(instructions: Prompts.cleanupInstructions(context: context, vocabTerms: vocabTerms))
+        let session = LanguageModelSession(instructions: Prompts.cleanupInstructions(context: context, vocabTerms: vocabTerms, domainProfile: domainProfile))
         let response = try await session.respond(
             to: Prompts.cleanupPrompt(transcript: text),
             schema: schema,

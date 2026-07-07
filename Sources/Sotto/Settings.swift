@@ -20,6 +20,7 @@ final class Settings: ObservableObject {
         static let agentReplies = "sotto.agentRepliesEnabled"
         static let clipboardHistory = "sotto.clipboardHistoryEnabled"
         static let clipboardDisclosureSeen = "sotto.clipboardDisclosureSeen"
+        static let domainProfile = "sotto.domainProfile"
     }
 
     private let defaults: UserDefaults
@@ -47,6 +48,10 @@ final class Settings: ObservableObject {
     @Published var clipboardHistoryEnabled: Bool { didSet { defaults.set(clipboardHistoryEnabled, forKey: Key.clipboardHistory) } }
     /// Whether the one-time "this stores everything you copy" disclosure was shown.
     @Published var clipboardDisclosureSeen: Bool { didSet { defaults.set(clipboardDisclosureSeen, forKey: Key.clipboardDisclosureSeen) } }
+    /// Free-text description of the user's field/role (e.g. "Cardiologist"). Fed to
+    /// on-device cleanup as a bias hint so ambiguous words resolve toward their
+    /// domain — never rewrites meaning. Empty = no domain bias (default).
+    @Published var domainProfile: String { didSet { defaults.set(domainProfile, forKey: Key.domainProfile) } }
     /// Reflects SMAppService; the didSet applies the change to the system.
     @Published var launchAtLogin: Bool { didSet { applyLaunchAtLogin() } }
     /// Transient UI feedback if a hotkey couldn't be registered (not persisted).
@@ -66,7 +71,8 @@ final class Settings: ObservableObject {
             Key.completedOnboardingGuide: false,
             Key.agentReplies: false,
             Key.clipboardHistory: false,
-            Key.clipboardDisclosureSeen: false
+            Key.clipboardDisclosureSeen: false,
+            Key.domainProfile: ""
         ])
         soundsEnabled = defaults.bool(forKey: Key.sounds)
         smartCleanupEnabled = defaults.bool(forKey: Key.smartCleanup)
@@ -80,6 +86,7 @@ final class Settings: ObservableObject {
         agentRepliesEnabled = defaults.bool(forKey: Key.agentReplies)
         clipboardHistoryEnabled = defaults.bool(forKey: Key.clipboardHistory)
         clipboardDisclosureSeen = defaults.bool(forKey: Key.clipboardDisclosureSeen)
+        domainProfile = defaults.string(forKey: Key.domainProfile) ?? ""
         launchAtLogin = LoginItem.isEnabled // didSet does not fire during init
     }
 

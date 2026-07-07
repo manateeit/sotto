@@ -199,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] enabled in self?.applyClipboardHistory(enabled: enabled) }
             .store(in: &cancellables)
 
+        // Keep the cleanup processor's domain bias in sync as the user edits it.
+        settings.$domainProfile
+            .sink { [weak self] profile in self?.smart.domainProfile = profile }
+            .store(in: &cancellables)
+
         // Coalesce the two properties (a hotkey change sets both) into one rebind.
         settings.$hotkeyKeyCode.combineLatest(settings.$hotkeyModifiers)
             .dropFirst() // skip the initial value; already registered at launch
@@ -258,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func reloadVocabulary() {
         vocabulary = VocabularyStore.loadCreatingExampleIfNeeded()
         smart = SmartProcessor(vocabTerms: vocabulary.hintTerms)
+        smart.domainProfile = settings.domainProfile // survive the processor recreate
     }
 
     func applicationWillTerminate(_ notification: Notification) {

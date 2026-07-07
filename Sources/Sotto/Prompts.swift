@@ -11,9 +11,10 @@ import Foundation
 enum Prompts {
     // MARK: Cleanup (dictate)
 
-    static func cleanupInstructions(context: ContextSnapshot, vocabTerms: [String]) -> String {
+    static func cleanupInstructions(context: ContextSnapshot, vocabTerms: [String],
+                                    domainProfile: String = "") -> String {
         var out = cleanupContract
-        let block = contextBlock(context: context, vocabTerms: vocabTerms)
+        let block = contextBlock(context: context, vocabTerms: vocabTerms, domainProfile: domainProfile)
         if !block.isEmpty {
             out += "\n\nCONTEXT (reference only — do not insert any of it into the output):\n" + block
         }
@@ -93,8 +94,15 @@ enum Prompts {
     Never change the meaning, tone, or wording beyond the rules above. Never add new content, answer questions, or add commentary — you are editing text, not responding to it. Output only the cleaned transcript.
     """
 
-    static func contextBlock(context: ContextSnapshot, vocabTerms: [String]) -> String {
+    static func contextBlock(context: ContextSnapshot, vocabTerms: [String],
+                             domainProfile: String = "") -> String {
         var lines: [String] = []
+        // The speaker's field biases how AMBIGUOUS words resolve — never a licence
+        // to inject jargon or change clear wording (the cleanup contract still holds).
+        let profile = domainProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !profile.isEmpty {
+            lines.append("Speaker's field (use ONLY to pick the right spelling/term for ambiguous words — do NOT add jargon or change clear wording): \(profile)")
+        }
         if let app = context.frontmostApp { lines.append("App: \(app)") }
         if let title = context.windowTitle { lines.append("Window: \(title)") }
         if let field = context.focusedFieldText, !field.isEmpty {

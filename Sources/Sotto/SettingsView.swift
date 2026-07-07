@@ -59,6 +59,18 @@ private struct GeneralTab: View {
                 Toggle("Launch Sotto at login", isOn: $settings.launchAtLogin)
             }
 
+            Section {
+                TextField("e.g. Cardiologist — expand clinical abbreviations",
+                          text: $settings.domainProfile, axis: .vertical)
+                    .lineLimit(1...3)
+                    .disabled(!settings.smartCleanupEnabled)
+            } header: {
+                Text("Your work")
+            } footer: {
+                Text("Describe your field so on-device cleanup picks the right terms for ambiguous words. It never changes your meaning or adds jargon. Leave blank for none. (Uses smart cleanup.)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             // Agents lives here as a section, deliberately NOT a fourth tab — the
             // whole point is that Sotto stays a three-tab app (superwhisper analysis).
             Section {

@@ -29,7 +29,19 @@ import Testing
         #expect(!out.contains("App:"))
         #expect(!out.contains("Window:"))
         #expect(!out.contains("Preferred spellings"))
+        #expect(!out.contains("Speaker's field")) // domain profile absent by default
         #expect(out.contains("Current date and time:")) // date is always present
+    }
+
+    @Test func domainProfileBiasesButDoesNotRewrite() {
+        let out = Prompts.cleanupInstructions(context: ContextSnapshot(), vocabTerms: [],
+                                              domainProfile: "  Cardiologist  ")
+        #expect(out.contains("Speaker's field"))
+        #expect(out.contains("Cardiologist"))         // trimmed, injected
+        #expect(out.contains("do NOT add jargon"))    // the bias-not-rewrite guard rail
+        // Empty/whitespace profile is omitted entirely.
+        let none = Prompts.cleanupInstructions(context: ContextSnapshot(), vocabTerms: [], domainProfile: "   ")
+        #expect(!none.contains("Speaker's field"))
     }
 
     @Test func cleanupPromptFramesTranscriptAsData() {
