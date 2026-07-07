@@ -17,6 +17,7 @@ final class Settings: ObservableObject {
         static let hotkeyKeyCode = "sotto.hotkeyKeyCode"
         static let hotkeyModifiers = "sotto.hotkeyModifiers"
         static let completedOnboardingGuide = "sotto.completedOnboardingGuide"
+        static let agentReplies = "sotto.agentRepliesEnabled"
     }
 
     private let defaults: UserDefaults
@@ -34,6 +35,10 @@ final class Settings: ObservableObject {
     /// Whether the user has clicked through the "how to dictate" onboarding step at
     /// least once. Combined with the permission grants to decide `Onboarding.shouldShow`.
     @Published var completedOnboardingGuide: Bool { didSet { defaults.set(completedOnboardingGuide, forKey: Key.completedOnboardingGuide) } }
+    /// Whether Sotto answers `sotto://reply` deep links from coding-agent hooks
+    /// (Claude Code, etc.). OFF by default — an inbound trigger is opt-in. It never
+    /// executes anything: the dictation is written back as text for the agent to read.
+    @Published var agentRepliesEnabled: Bool { didSet { defaults.set(agentRepliesEnabled, forKey: Key.agentReplies) } }
     /// Reflects SMAppService; the didSet applies the change to the system.
     @Published var launchAtLogin: Bool { didSet { applyLaunchAtLogin() } }
     /// Transient UI feedback if a hotkey couldn't be registered (not persisted).
@@ -50,7 +55,8 @@ final class Settings: ObservableObject {
             Key.retentionDays: HistoryStore.defaultRetentionDays,
             Key.hotkeyKeyCode: kVK_Space,
             Key.hotkeyModifiers: Int(optionKey),
-            Key.completedOnboardingGuide: false
+            Key.completedOnboardingGuide: false,
+            Key.agentReplies: false
         ])
         soundsEnabled = defaults.bool(forKey: Key.sounds)
         smartCleanupEnabled = defaults.bool(forKey: Key.smartCleanup)
@@ -61,6 +67,7 @@ final class Settings: ObservableObject {
         hotkeyKeyCode = defaults.integer(forKey: Key.hotkeyKeyCode)
         hotkeyModifiers = defaults.integer(forKey: Key.hotkeyModifiers)
         completedOnboardingGuide = defaults.bool(forKey: Key.completedOnboardingGuide)
+        agentRepliesEnabled = defaults.bool(forKey: Key.agentReplies)
         launchAtLogin = LoginItem.isEnabled // didSet does not fire during init
     }
 

@@ -59,6 +59,24 @@ private struct GeneralTab: View {
                 Toggle("Launch Sotto at login", isOn: $settings.launchAtLogin)
             }
 
+            // Agents lives here as a section, deliberately NOT a fourth tab — the
+            // whole point is that Sotto stays a three-tab app (superwhisper analysis).
+            Section {
+                Toggle("Voice replies to coding agents", isOn: $settings.agentRepliesEnabled)
+                LabeledContent("Claude Code plugin") {
+                    Button("Install instructions…") {
+                        if let url = URL(string: "https://github.com/manateeit/sotto/tree/main/integrations/claude-code") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            } header: {
+                Text("Agents")
+            } footer: {
+                Text("Speak to Claude Code hands-free: when the agent stops or asks, Sotto pops up, you talk, and your words go back as its next input — on-device, and it never runs anything on its own.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("History") {
                 Toggle("Save dictation history", isOn: $settings.historyEnabled)
                 Toggle("Keep audio (WAV)", isOn: $settings.keepAudio)

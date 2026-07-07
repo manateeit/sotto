@@ -74,6 +74,17 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
     <string>Sotto transcribes your dictation on-device.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Sotto transcribes your speech to text entirely on-device.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>${BUNDLE_ID}</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>sotto</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

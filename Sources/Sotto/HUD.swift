@@ -15,6 +15,10 @@ enum HUDState: Equatable {
     /// A long recording is still capturing, but an Esc has armed discard — press Esc
     /// again to actually throw it away. Amber, not red: recording continues underneath.
     case confirmCancel(String)
+    /// Recording a spoken reply to a coding agent (via a sotto://reply hook). Same
+    /// capture as dictation, but the transcript goes back to the agent as text — it
+    /// never executes anything. The label names the target ("Reply → Claude Code").
+    case reply(String)
 
     var dotColor: Color {
         switch self {
@@ -24,6 +28,7 @@ enum HUDState: Equatable {
         case .error: return .yellow
         case .confirming: return HUDState.violet
         case .confirmCancel: return .orange
+        case .reply: return .red
         }
     }
 
@@ -39,13 +44,16 @@ enum HUDState: Equatable {
         case .error(let message): return message
         case .confirming(let text): return text
         case .confirmCancel(let text): return text
+        case .reply(let text): return text
         }
     }
 
     /// Whether the waveform should react to live audio.
     var isListening: Bool {
-        if case .recording = self { return true }
-        return false
+        switch self {
+        case .recording, .reply: return true
+        default: return false
+        }
     }
 }
 
@@ -126,6 +134,8 @@ struct HUDView: View {
             return "Voice command pending. Press Option-Space to execute or Escape to cancel."
         case .confirmCancel:
             return "Recording continues. Press Escape again to discard it."
+        case .reply:
+            return "Recording a spoken reply to your coding agent. Press Option-Space to send."
         }
     }
 }

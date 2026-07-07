@@ -92,6 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // the armed window stays open before reverting to plain recording.
     private static let cancelConfirmThreshold: TimeInterval = 30
     private static let cancelArmWindow: TimeInterval = 4
+    /// Set while capturing a spoken reply for a coding agent (sotto://reply). When
+    /// non-nil, the finished transcript is written here as text instead of pasted —
+    /// it never executes anything.
+    private var replyResponsePath: String?
+    private var replyAgentName = "your agent"
 
     /// A parsed voice command staged and awaiting the human confirm (M6).
     private struct PendingCommand {
@@ -291,6 +296,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         context.merge(accessibility)
     }
 
+    // MARK: Agent reply bridge (sotto://reply)
+
+    /// URL-scheme entry point. A coding-agent hook opens `sotto://reply?...` when the
+    /// agent stops or asks; we record a spoken reply and hand the transcript back as
+    /// text. Opt-in, and it never executes anything.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let request = ReplyBridge.parse(url) else { continue }
+            handleReplyRequest(request)
+        }
+    }
+
+    private func handleReplyRequest(_ request: ReplyBridge.Request) {
+        guard settings.agentRepliesEnabled else {
+            NSLog("Sotto: ignoring sotto://reply — enable Agents in Settings › General.")
+            return
+        }
+        guard phase == .idle else {
+            NSLog("Sotto: busy — ignoring agent reply request.")
+            return
+        }
+        replyResponsePath = request.responsePath
+        replyAgentName = request.agent
+        startRecording()
+    }
+
     // MARK: Dictation loop
 
     private func startRecording() {
@@ -322,9 +353,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? HistoryStore.audioURL(forID: entryID) : nil
 
         sounds.play(.start)
-        hud.show(.recording)
+        if replyResponsePath != nil {
+            hud.show(.reply("Reply → \(replyAgentName) · ⌥Space to send"))
+            setStatus("Reply → \(replyAgentName)…")
+        } else {
+            hud.show(.recording)
+            setStatus("Listening… (⌥Space or hold)")
+        }
         setRecordingIcon(true)
-        setStatus("Listening… (⌥Space or hold)")
         installEscMonitor()
 
         Task { @MainActor in
@@ -408,9 +444,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let rewritten = vocabulary.rewrite(raw)
+
+            // Capture-and-clear the reply target up front so it can never leak into a
+            // later dictation, whichever branch we take below.
+            let replyPath = replyResponsePath
+            replyResponsePath = nil
+
             guard !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 setStatus("No speech detected.")
                 hud.hide()
+                setMenuIcon(.idle)
+                return
+            }
+
+            // Agent reply (sotto://reply): hand the transcript back as TEXT — never a
+            // command, never a paste. Empty context so no transform is attempted; a
+            // spoken reply is dictation to the agent, cleaned like any dictation.
+            if let replyPath {
+                let smartAvailable = SmartProcessor.isAvailable && settings.smartCleanupEnabled
+                let outcome = await pipeline.run(text: rewritten, context: ContextSnapshot(),
+                                                 shiftHeld: shiftHeld, smartAvailable: smartAvailable,
+                                                 smart: smart, raw: rawProcessor)
+                let text: String
+                if case .paste(let cleaned, _) = outcome { text = cleaned } else { text = rewritten }
+                if ReplyBridge.write(text, toPath: replyPath) {
+                    setStatus("Sent reply to \(replyAgentName).")
+                    flashDoneThenHide()
+                } else {
+                    showError("Couldn't write reply")
+                }
                 return
             }
 
@@ -558,6 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelArmed = false
         cancelDisarmWork?.cancel()
         cancelDisarmWork = nil
+        replyResponsePath = nil // cancelled reply writes nothing; the hook times out
         teardownAudioCallbacks()
         recorder.stop()
         removeEscMonitor()
