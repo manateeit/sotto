@@ -4,6 +4,16 @@ import AVFoundation
 import Combine
 import Foundation
 
+/// Whether an Esc should discard the recording outright, or first arm a confirm.
+/// Pure + unit-tested. Short recordings discard instantly (frictionless common
+/// path); long ones require a second, armed Esc so a stray keypress can't nuke a
+/// long dictation.
+enum CancelPolicy {
+    static func discardsImmediately(elapsed: TimeInterval, armed: Bool, threshold: TimeInterval) -> Bool {
+        armed || elapsed < threshold
+    }
+}
+
 /// Menu-bar-only orchestrator for the dictation loop:
 /// hotkey (push-to-talk or toggle) → record + HUD → SpeechAnalyzer → paste.
 @MainActor
@@ -73,6 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancelRequestedDuringStart = false
     private var hudDismissWork: DispatchWorkItem?
     private var escMonitor: Any?
+    /// A long recording's first Esc arms discard (rather than discarding outright);
+    /// a second Esc within the window confirms. Protects long dictations from a
+    /// stray Esc while keeping short-cancel frictionless.
+    private var cancelArmed = false
+    private var cancelDisarmWork: DispatchWorkItem?
+    // ponytail: 30s is the "long enough to be worth protecting" line; 4s is how long
+    // the armed window stays open before reverting to plain recording.
+    private static let cancelConfirmThreshold: TimeInterval = 30
+    private static let cancelArmWindow: TimeInterval = 4
 
     /// A parsed voice command staged and awaiting the human confirm (M6).
     private struct PendingCommand {
@@ -354,6 +373,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         removeEscMonitor()
         axCaptureTask?.cancel()
         sounds.play(.stop)
+        cancelArmed = false
+        cancelDisarmWork?.cancel()
+        cancelDisarmWork = nil
         hud.update(.transcribing)
         setMenuIcon(.processing)
         setStatus("Transcribing…")
@@ -499,16 +521,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .starting:
             cancelRequestedDuringStart = true
         case .recording:
-            performCancel(playSound: true)
+            let elapsed = Date().timeIntervalSince(recordStartDate)
+            if CancelPolicy.discardsImmediately(elapsed: elapsed, armed: cancelArmed,
+                                                threshold: Self.cancelConfirmThreshold) {
+                performCancel(playSound: true)
+            } else {
+                armCancelConfirm(elapsed: elapsed)
+            }
         case .idle, .finishing, .confirmingCommand:
             // The confirm phase has its own Esc handler (cancelPendingCommand).
             break
         }
     }
 
+    /// First Esc on a long recording: warn instead of discarding, and keep recording.
+    private func armCancelConfirm(elapsed: TimeInterval) {
+        cancelArmed = true
+        hud.update(.confirmCancel("Esc again to discard \(Int(elapsed))s"))
+        let work = DispatchWorkItem { [weak self] in self?.disarmCancelConfirm() }
+        cancelDisarmWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.cancelArmWindow, execute: work)
+    }
+
+    /// Revert the armed warning back to plain recording (the window lapsed).
+    private func disarmCancelConfirm() {
+        cancelDisarmWork?.cancel()
+        cancelDisarmWork = nil
+        guard cancelArmed else { return }
+        cancelArmed = false
+        if phase == .recording { hud.update(.recording) }
+    }
+
     /// Discard the in-flight dictation without transcribing or pasting.
     private func performCancel(playSound: Bool) {
         phase = .finishing
+        cancelArmed = false
+        cancelDisarmWork?.cancel()
+        cancelDisarmWork = nil
         teardownAudioCallbacks()
         recorder.stop()
         removeEscMonitor()

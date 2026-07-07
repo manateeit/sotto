@@ -12,6 +12,9 @@ enum HUDState: Equatable {
     /// Awaiting an explicit confirm for a parsed voice command. The associated value
     /// is the full pill text (summary + "⌥Space to run · Esc to cancel").
     case confirming(String)
+    /// A long recording is still capturing, but an Esc has armed discard — press Esc
+    /// again to actually throw it away. Amber, not red: recording continues underneath.
+    case confirmCancel(String)
 
     var dotColor: Color {
         switch self {
@@ -20,6 +23,7 @@ enum HUDState: Equatable {
         case .done: return .green
         case .error: return .yellow
         case .confirming: return HUDState.violet
+        case .confirmCancel: return .orange
         }
     }
 
@@ -34,6 +38,7 @@ enum HUDState: Equatable {
         case .done: return "Done"
         case .error(let message): return message
         case .confirming(let text): return text
+        case .confirmCancel(let text): return text
         }
     }
 
@@ -119,6 +124,8 @@ struct HUDView: View {
             return "Error: \(msg)"
         case .confirming:
             return "Voice command pending. Press Option-Space to execute or Escape to cancel."
+        case .confirmCancel:
+            return "Recording continues. Press Escape again to discard it."
         }
     }
 }
