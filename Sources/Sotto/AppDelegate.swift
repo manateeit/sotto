@@ -326,11 +326,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startRecording()
     }
 
+    /// The single choke point for leaving reply mode. Writes an empty response (so
+    /// the agent's hook unblocks at once) unless the real transcript was already
+    /// written, then clears the target so it can NEVER leak into a later dictation.
+    /// A no-op when not in reply mode.
+    private func clearReplyState(writeEmpty: Bool) {
+        guard let path = replyResponsePath else { return }
+        if writeEmpty { _ = ReplyBridge.write("", toPath: path) }
+        replyResponsePath = nil
+    }
+
     // MARK: Dictation loop
 
     private func startRecording() {
         guard phase == .idle else { return }
-        guard ensureMicrophoneAuthorized() else { return }
+        // A failed start must not leave a reply target armed for the next dictation.
+        guard ensureMicrophoneAuthorized() else { clearReplyState(writeEmpty: true); return }
 
         // Recording must start immediately — capture only the cheap context (app,
         // bundle, date) synchronously. The AX pieces (selection/window/field) are
@@ -386,6 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 removeEscMonitor()
                 await engine.cancelSession()
                 phase = .idle
+                clearReplyState(writeEmpty: true)
                 sounds.play(.cancel)
                 showError("Couldn't start recording")
             }
@@ -458,6 +470,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 setStatus("No speech detected.")
                 hud.hide()
                 setMenuIcon(.idle)
+                // A reply that transcribed to nothing still unblocks the hook at once.
+                if let replyPath { _ = ReplyBridge.write("", toPath: replyPath) }
                 return
             }
 
@@ -533,6 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !output.isEmpty else {
             setStatus("No speech detected.")
             hud.hide()
+            setMenuIcon(.idle)
             return
         }
         switch injector.inject(output) {
@@ -615,7 +630,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelDisarmWork = nil
         guard cancelArmed else { return }
         cancelArmed = false
-        if phase == .recording { hud.update(.recording) }
+        if phase == .recording {
+            // Revert to the right label — a reply capture must keep its framing.
+            hud.update(replyResponsePath != nil
+                ? .reply("Reply → \(replyAgentName) · ⌥Space to send")
+                : .recording)
+        }
     }
 
     /// Discard the in-flight dictation without transcribing or pasting.
@@ -626,8 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelDisarmWork = nil
         // A cancelled reply writes an empty response so the agent's hook unblocks
         // at once (empty = "no reply", the hook injects nothing).
-        if let path = replyResponsePath { _ = ReplyBridge.write("", toPath: path) }
-        replyResponsePath = nil
+        clearReplyState(writeEmpty: true)
         teardownAudioCallbacks()
         recorder.stop()
         removeEscMonitor()
@@ -718,6 +737,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         phase = .idle
         setStatus(reason)
         hud.hide()
+        setMenuIcon(.idle) // the command path left the icon on "processing"
     }
 
     private func installConfirmMonitors() {

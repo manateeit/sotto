@@ -14,7 +14,6 @@ import Foundation
 enum ReplyBridge {
     struct Request: Equatable {
         let responsePath: String
-        let contextPath: String?
         let agent: String
     }
 
@@ -28,13 +27,27 @@ enum ReplyBridge {
             items.first { $0.name == name }?.value?.trimmingCharacters(in: .whitespaces)
         }
         guard let response = value("response"), !response.isEmpty else { return nil }
-        let ctx = value("ctx").flatMap { $0.isEmpty ? nil : $0 }
         let agent = value("agent").flatMap { $0.isEmpty ? nil : $0 } ?? "your agent"
-        return Request(responsePath: response, contextPath: ctx, agent: agent)
+        return Request(responsePath: response, agent: agent)
     }
 
-    /// Write the spoken transcript to the response file atomically. Returns success.
+    /// The response path comes from an external URL, so only ever write inside a
+    /// system temp directory — never an arbitrary user-writable location. Pure —
+    /// unit-tested.
+    static func isAllowedTempPath(_ path: String) -> Bool {
+        let p = (path as NSString).standardizingPath
+        guard !p.contains("..") else { return false }
+        let allowed = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"]
+        return allowed.contains { p.hasPrefix($0) }
+    }
+
+    /// Write the spoken transcript to the response file atomically. Refuses paths
+    /// outside a temp directory. Returns success.
     static func write(_ text: String, toPath path: String) -> Bool {
+        guard isAllowedTempPath(path) else {
+            NSLog("Sotto: refusing reply write outside a temp directory: \(path)")
+            return false
+        }
         do {
             try Data(text.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
             return true
