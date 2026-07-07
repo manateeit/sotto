@@ -860,13 +860,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func promptForAccessibilityTrust() {
-        // Needed to post the synthetic ⌘V CGEvent. Prompts the user once.
-        // The key is kAXTrustedCheckOptionPrompt's value, used as a literal to avoid
-        // the imported global var (not concurrency-safe under Swift 6).
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        if !AXIsProcessTrustedWithOptions(options) {
-            NSLog("Sotto: grant Accessibility in System Settings › Privacy › Accessibility to enable paste.")
-        }
+        // Check if we have Accessibility trust WITHOUT prompting (to avoid repeat dialogs).
+        // If not trusted, show onboarding window which has the permissions guide.
+        guard !AXIsProcessTrusted() else { return }
+
+        // Permission not granted. Show onboarding so user can see the instructions.
+        NSLog("Sotto: Accessibility permission required. Opening permissions guide.")
+        showOnboardingWindow()
     }
 
     // MARK: Reprocessing (for history re-transcription)
