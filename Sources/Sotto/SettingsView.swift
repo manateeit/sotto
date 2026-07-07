@@ -86,6 +86,13 @@ private struct GeneralTab: View {
                     }
                 }
             }
+
+            Section {
+                Toggle("Clipboard history", isOn: $settings.clipboardHistoryEnabled)
+            } footer: {
+                Text("Save what you copy (⌘C) to a separate, local-only history — never sent anywhere. Skips items marked secret by password managers; keeps the last \(ClipboardHistoryStore.maxCount) clips.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -249,7 +256,10 @@ private struct RouteBadge: View {
     }
 }
 
+private enum HistorySource: Hashable { case voice, clipboard }
+
 private struct HistoryTab: View {
+    @State private var source: HistorySource = .voice
     @State private var entries: [HistoryEntry] = []
     @State private var reprocessingID: String?
     @State private var reprocessResult: (raw: String, cleaned: String, route: String)?
@@ -272,6 +282,16 @@ private struct HistoryTab: View {
 
     var body: some View {
         VStack(alignment: .leading) {
+            Picker("", selection: $source) {
+                Text("Voice").tag(HistorySource.voice)
+                Text("Clipboard").tag(HistorySource.clipboard)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if source == .clipboard {
+                ClipboardHistoryList()
+            } else {
             HStack {
                 Text("Click an entry to copy it. Star to pin it to the top.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -351,6 +371,7 @@ private struct HistoryTab: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center).padding(.top, 8)
             }
+            } // end else (voice source)
         }
         .padding()
         .onAppear(perform: reload)
@@ -411,5 +432,87 @@ private struct HistoryTab: View {
                 }
             }
         }
+    }
+}
+
+/// The Clipboard side of the History tab. Plain text clips, newest-first, with
+/// search + click-to-copy + delete. No star/reprocess/Raw-Cleaned — those are
+/// voice-only. Reads the SEPARATE ClipboardHistoryStore.
+private struct ClipboardHistoryList: View {
+    @State private var entries: [ClipboardEntry] = []
+    @State private var query = ""
+
+    private var shown: [ClipboardEntry] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return entries }
+        return entries.filter {
+            $0.text.lowercased().contains(q) || ($0.sourceApp?.lowercased().contains(q) ?? false)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("Click a clip to copy it. Local-only; passwords skipped.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Delete All", role: .destructive) {
+                    ClipboardHistoryStore.deleteAll()
+                    entries = []
+                }
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search clips…", text: $query).textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Button(action: { query = "" }) {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+
+            if entries.isEmpty {
+                Text("No clips yet. Copy something (⌘C) and it'll appear here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center).padding(.top, 12)
+            }
+            List(shown) { entry in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.text).lineLimit(2)
+                        HStack(spacing: 6) {
+                            Text(entry.date, style: .date).font(.caption).foregroundStyle(.secondary)
+                            if let app = entry.sourceApp {
+                                Text(app).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { copy(entry.text) }
+                    Spacer()
+                    Button(action: { deleteEntry(entry) }) {
+                        Image(systemName: "trash").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete this clip")
+                }
+            }
+        }
+        .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: .sottoSettingsDidShow)) { _ in reload() }
+    }
+
+    private func reload() { entries = Array(ClipboardHistoryStore.load().reversed()) }
+
+    private func copy(_ text: String) {
+        // Suppressed so re-copying a clip isn't re-captured as a new entry.
+        (NSApplication.shared.delegate as? AppDelegate)?.copyToPasteboardSuppressed(text)
+    }
+
+    private func deleteEntry(_ entry: ClipboardEntry) {
+        ClipboardHistoryStore.delete(id: entry.id)
+        reload()
     }
 }

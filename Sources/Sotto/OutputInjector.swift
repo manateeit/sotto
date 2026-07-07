@@ -61,6 +61,20 @@ final class OutputInjector {
     /// whenever a new injection begins. Main-thread confined.
     private var pendingRestore: DispatchWorkItem?
 
+    /// Fingerprints every pasteboard write Sotto makes so the clipboard-history
+    /// monitor ignores them (self-paste loop guard). Optional so tests/other callers
+    /// can construct an injector without one.
+    private let writeGuard: ClipboardWriteGuard?
+
+    init(writeGuard: ClipboardWriteGuard? = nil) {
+        self.writeGuard = writeGuard
+    }
+
+    /// Stamp the pasteboard's current changeCount as a Sotto-originated write.
+    private func stampOwnWrite(_ pasteboard: NSPasteboard) {
+        writeGuard?.markOwnWrite(changeCount: pasteboard.changeCount)
+    }
+
     @discardableResult
     func inject(_ text: String) -> Result {
         guard !text.isEmpty else { return .empty }
@@ -77,6 +91,7 @@ final class OutputInjector {
             // Leave the transcript on the clipboard and let the caller notify.
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
+            stampOwnWrite(pasteboard)
             return .refusedSecureInput
         }
 
@@ -85,6 +100,7 @@ final class OutputInjector {
             // delivered. Leave the transcript on the clipboard rather than losing it.
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
+            stampOwnWrite(pasteboard)
             return .refusedNoAccessibility
         }
 
@@ -92,6 +108,7 @@ final class OutputInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         let writtenChangeCount = pasteboard.changeCount
+        stampOwnWrite(pasteboard) // our dictated-text write — not a user copy
 
         synthesizeCommandV()
 
@@ -100,6 +117,7 @@ final class OutputInjector {
             // otherwise we'd clobber their fresh clipboard.
             if Self.shouldRestore(writtenChangeCount: writtenChangeCount, currentChangeCount: pasteboard.changeCount) {
                 snapshot.restore(to: pasteboard)
+                self?.stampOwnWrite(pasteboard) // the restore write is also ours
             }
             self?.pendingRestore = nil
         }

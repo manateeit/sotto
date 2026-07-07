@@ -18,6 +18,8 @@ final class Settings: ObservableObject {
         static let hotkeyModifiers = "sotto.hotkeyModifiers"
         static let completedOnboardingGuide = "sotto.completedOnboardingGuide"
         static let agentReplies = "sotto.agentRepliesEnabled"
+        static let clipboardHistory = "sotto.clipboardHistoryEnabled"
+        static let clipboardDisclosureSeen = "sotto.clipboardDisclosureSeen"
     }
 
     private let defaults: UserDefaults
@@ -39,6 +41,12 @@ final class Settings: ObservableObject {
     /// (Claude Code, etc.). OFF by default — an inbound trigger is opt-in. It never
     /// executes anything: the dictation is written back as text for the agent to read.
     @Published var agentRepliesEnabled: Bool { didSet { defaults.set(agentRepliesEnabled, forKey: Key.agentReplies) } }
+    /// Opt-in, OFF by default. Captures general-clipboard copies into a SEPARATE
+    /// on-device history (its own file). Zero network. Skips concealed/transient
+    /// pasteboard items (password managers). Count-capped, 0600, backup-excluded.
+    @Published var clipboardHistoryEnabled: Bool { didSet { defaults.set(clipboardHistoryEnabled, forKey: Key.clipboardHistory) } }
+    /// Whether the one-time "this stores everything you copy" disclosure was shown.
+    @Published var clipboardDisclosureSeen: Bool { didSet { defaults.set(clipboardDisclosureSeen, forKey: Key.clipboardDisclosureSeen) } }
     /// Reflects SMAppService; the didSet applies the change to the system.
     @Published var launchAtLogin: Bool { didSet { applyLaunchAtLogin() } }
     /// Transient UI feedback if a hotkey couldn't be registered (not persisted).
@@ -56,7 +64,9 @@ final class Settings: ObservableObject {
             Key.hotkeyKeyCode: kVK_Space,
             Key.hotkeyModifiers: Int(optionKey),
             Key.completedOnboardingGuide: false,
-            Key.agentReplies: false
+            Key.agentReplies: false,
+            Key.clipboardHistory: false,
+            Key.clipboardDisclosureSeen: false
         ])
         soundsEnabled = defaults.bool(forKey: Key.sounds)
         smartCleanupEnabled = defaults.bool(forKey: Key.smartCleanup)
@@ -68,6 +78,8 @@ final class Settings: ObservableObject {
         hotkeyModifiers = defaults.integer(forKey: Key.hotkeyModifiers)
         completedOnboardingGuide = defaults.bool(forKey: Key.completedOnboardingGuide)
         agentRepliesEnabled = defaults.bool(forKey: Key.agentReplies)
+        clipboardHistoryEnabled = defaults.bool(forKey: Key.clipboardHistory)
+        clipboardDisclosureSeen = defaults.bool(forKey: Key.clipboardDisclosureSeen)
         launchAtLogin = LoginItem.isEnabled // didSet does not fire during init
     }
 

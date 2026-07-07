@@ -31,7 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let commandPipeline = CommandPipeline()
     private lazy var commandRegistry = CommandRegistry(injector: injector)
     private let clipboard = ClipboardMonitor()
-    private let injector = OutputInjector()
+    /// Fingerprints Sotto's own pasteboard writes so the clipboard-history monitor
+    /// ignores them (self-paste loop guard). Shared by the injector and the monitor.
+    private let clipboardWriteGuard = ClipboardWriteGuard()
+    private lazy var injector = OutputInjector(writeGuard: clipboardWriteGuard)
+    private lazy var clipboardMonitor = ClipboardHistoryMonitor(writeGuard: clipboardWriteGuard)
     private let hud = HUDController()
     private let sounds = Sounds()
     private var gesture = HotkeyGesture()
@@ -69,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusMenuItem: NSMenuItem?
     /// The dynamically-rebuilt History submenu in the menu-bar dropdown.
     private var historyMenu: NSMenu?
+    /// The dynamically-rebuilt Clipboard-history submenu.
+    private var clipboardMenu: NSMenu?
 
     /// Lifecycle of one dictation. `starting` covers the async engine/mic spin-up
     /// so a stop or cancel arriving during it can be honored. `confirmingCommand`
@@ -142,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reloadVocabulary()
         observeSettings()
 
+        // Resume clipboard capture if it was left on (disclosure already seen).
+        if settings.clipboardHistoryEnabled { clipboardMonitor.start() }
+
         // Retire history past its retention window.
         HistoryStore.prune(retentionDays: settings.historyRetentionDays)
 
@@ -177,6 +186,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$smartCleanupEnabled
             .dropFirst() // don't clobber the "Preparing…" status at launch
             .sink { [weak self] _ in self?.reflectReadyStatus() }
+            .store(in: &cancellables)
+
+        // Start/stop clipboard capture live when the opt-in toggle flips (and show
+        // the one-time disclosure the first time it's enabled).
+        settings.$clipboardHistoryEnabled
+            .dropFirst()
+            .sink { [weak self] enabled in self?.applyClipboardHistory(enabled: enabled) }
             .store(in: &cancellables)
 
         // Coalesce the two properties (a hotkey change sets both) into one rebind.
@@ -895,6 +911,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         historyMenu = historySubmenu
         menu.addItem(historyItem)
 
+        // Clipboard history — a flat click-to-copy list of recent clips (only
+        // meaningful when the opt-in feature is on). Rebuilt on demand.
+        let clipboardItem = NSMenuItem(title: "Clipboard", action: nil, keyEquivalent: "")
+        let clipboardSubmenu = NSMenu(title: "Clipboard")
+        clipboardSubmenu.delegate = self
+        clipboardItem.submenu = clipboardSubmenu
+        clipboardMenu = clipboardSubmenu
+        menu.addItem(clipboardItem)
+
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -925,12 +950,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSLog("Sotto: menu bar is full — macOS is hiding Sotto's status icon. ⌥Space still works without it.")
     }
 
-    // MARK: History submenu
+    // MARK: History / Clipboard submenus
 
-    /// Rebuild the History submenu just before it opens so it always reflects the
-    /// current store (favorites pinned on top, then the 10 most recent non-favorites).
+    /// Rebuild the relevant submenu just before it opens so it always reflects the store.
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === historyMenu else { return }
+        if menu === historyMenu { rebuildHistoryMenu(menu) }
+        else if menu === clipboardMenu { rebuildClipboardMenu(menu) }
+    }
+
+    /// Voice history: favorites pinned on top, then the 10 most recent non-favorites.
+    private func rebuildHistoryMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
         let all = Array(HistoryStore.load().reversed()) // newest first
@@ -951,6 +980,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(historySectionHeader("Recent"))
         for entry in recent { menu.addItem(historyEntryItem(entry)) }
+    }
+
+    /// Clipboard history: a flat click-to-copy list of the 10 most recent clips.
+    private func rebuildClipboardMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        guard settings.clipboardHistoryEnabled else {
+            let off = NSMenuItem(title: "Clipboard history is off — enable in Settings", action: nil, keyEquivalent: "")
+            off.isEnabled = false
+            menu.addItem(off)
+            return
+        }
+
+        let recent = Array(ClipboardHistoryStore.load().reversed().prefix(10))
+        guard !recent.isEmpty else {
+            let empty = NSMenuItem(title: "No clips yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for entry in recent {
+            let item = NSMenuItem(title: historyPreview(entry.text),
+                                  action: #selector(copyClipboardItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = entry
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func copyClipboardItem(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? ClipboardEntry else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.text, forType: .string)
+        // Stamp so re-copying a clip isn't re-captured as a fresh entry.
+        clipboardWriteGuard.markOwnWrite(changeCount: NSPasteboard.general.changeCount)
+        setStatus("Copied from clipboard.")
+    }
+
+    /// Put text on the clipboard as a Sotto-originated write, so the clipboard
+    /// monitor won't re-capture it. Used by the Settings clipboard list.
+    func copyToPasteboardSuppressed(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        clipboardWriteGuard.markOwnWrite(changeCount: NSPasteboard.general.changeCount)
+    }
+
+    // MARK: Clipboard history lifecycle
+
+    /// Start/stop the capture monitor as the opt-in toggle flips. On first enable,
+    /// gate behind a one-time disclosure of what a clipboard log does and does not
+    /// protect.
+    private func applyClipboardHistory(enabled: Bool) {
+        guard enabled else { clipboardMonitor.stop(); return }
+        if settings.clipboardDisclosureSeen {
+            clipboardMonitor.start()
+        } else {
+            showClipboardDisclosure()
+        }
+    }
+
+    private func showClipboardDisclosure() {
+        let alert = NSAlert()
+        alert.messageText = "Turn on clipboard history?"
+        alert.informativeText = """
+        Sotto will save the text of things you copy to a private, on-device history — \
+        separate from your voice history and never sent anywhere. It skips items marked \
+        secret by password managers, but some passwords and tokens aren't marked and \
+        would be stored. Only the last \(ClipboardHistoryStore.maxCount) clips are kept, \
+        and you can clear them anytime.
+        """
+        alert.addButton(withTitle: "Turn On")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            settings.clipboardDisclosureSeen = true
+            clipboardMonitor.start()
+        } else {
+            settings.clipboardHistoryEnabled = false // reverts the toggle
+        }
     }
 
     private func historySectionHeader(_ title: String) -> NSMenuItem {
@@ -992,6 +1099,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let entry = sender.representedObject as? HistoryEntry else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entry.finalOutput, forType: .string)
+        clipboardWriteGuard.markOwnWrite(changeCount: NSPasteboard.general.changeCount)
         setStatus("Copied from history.")
     }
 
@@ -1015,6 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let raw = lastRawTranscript else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(raw, forType: .string)
+        clipboardWriteGuard.markOwnWrite(changeCount: NSPasteboard.general.changeCount)
         setStatus("Raw transcript restored.")
     }
 
