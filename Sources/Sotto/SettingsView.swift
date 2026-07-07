@@ -110,6 +110,7 @@ private struct HotkeyRecorder: View {
 private struct VocabularyTab: View {
     @State private var literalRules: [EditableRule] = []
     @State private var regexRuleCount = 0
+    @State private var importMessage: String?
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -132,8 +133,12 @@ private struct VocabularyTab: View {
                 Text("Regex rules are supported in vocabulary.json directly.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if let msg = importMessage {
+                Text(msg).font(.caption).foregroundStyle(.green)
+            }
             HStack {
                 Button("Add") { literalRules.append(EditableRule()) }
+                Button("Import…") { importVocabulary() }
                 Spacer()
                 Button("Save") { save() }.keyboardShortcut(.defaultAction)
             }
@@ -158,6 +163,35 @@ private struct VocabularyTab: View {
         }
         VocabularyStore.save(VocabularyRewriter(rules: edited + preservedRegex))
         NotificationCenter.default.post(name: .sottoVocabularyChanged, object: nil)
+    }
+
+    private func importVocabulary() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json, .text, .commaSeparatedText]
+        panel.message = "Import vocabulary from a competitor (JSON, CSV, or text file)"
+        panel.prompt = "Import"
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+
+            if let imported = VocabularyImporter.importVocabulary(from: url) {
+                let current = VocabularyStore.loadCreatingExampleIfNeeded()
+                let merged = VocabularyImporter.merge(current, with: imported)
+                VocabularyStore.save(merged)
+
+                // Reload and show status
+                literalRules = merged.rules.filter { !$0.isRegex }.map {
+                    EditableRule(pattern: $0.pattern, replacement: $0.replacement)
+                }
+                regexRuleCount = merged.rules.filter { $0.isRegex }.count
+                importMessage = "Imported \(imported.count) rule(s)"
+                NotificationCenter.default.post(name: .sottoVocabularyChanged, object: nil)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    importMessage = nil
+                }
+            }
+        }
     }
 }
 
