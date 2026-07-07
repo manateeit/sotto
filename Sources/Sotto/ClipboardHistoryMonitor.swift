@@ -61,7 +61,9 @@ final class ClipboardHistoryMonitor {
         guard s != lastCapturedText else { return }         // dedup consecutive identical copies
         lastCapturedText = s
 
-        let capped = s.count > ClipboardHistoryStore.maxLength
+        // Guard on utf16 count (cheap) before doing the grapheme-cluster prefix,
+        // so a multi-MB paste doesn't walk the whole string on the timer callback.
+        let capped = s.utf16.count > ClipboardHistoryStore.maxLength
             ? String(s.prefix(ClipboardHistoryStore.maxLength)) : s
         let front = NSWorkspace.shared.frontmostApplication
         ClipboardHistoryStore.append(ClipboardEntry(

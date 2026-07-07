@@ -148,8 +148,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reloadVocabulary()
         observeSettings()
 
-        // Resume clipboard capture if it was left on (disclosure already seen).
-        if settings.clipboardHistoryEnabled { clipboardMonitor.start() }
+        // Resume clipboard capture only if it was left on AND the disclosure was
+        // accepted — so a wrongly-persisted enabled flag can never silently start
+        // capture without informed consent.
+        if settings.clipboardHistoryEnabled && settings.clipboardDisclosureSeen {
+            clipboardMonitor.start()
+        }
 
         // Retire history past its retention window.
         HistoryStore.prune(retentionDays: settings.historyRetentionDays)
@@ -1056,7 +1060,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.clipboardDisclosureSeen = true
             clipboardMonitor.start()
         } else {
-            settings.clipboardHistoryEnabled = false // reverts the toggle
+            // Revert on the NEXT runloop turn, not here: we're inside the sink that
+            // observes this very @Published property, and @Published broadcasts in
+            // willSet (before storage commits), so a reentrant write now would be
+            // clobbered by the outer `= true` setter finishing last — silently
+            // leaving the feature ON after the user declined (consent bypass).
+            DispatchQueue.main.async { [weak self] in self?.settings.clipboardHistoryEnabled = false }
         }
     }
 
