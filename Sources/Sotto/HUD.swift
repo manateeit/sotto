@@ -84,13 +84,27 @@ struct HUDView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+        // The confirming state gets a distinct treatment — a violet hairline + halo —
+        // so "waiting on YOU" reads instantly differently from "working". It's the
+        // safety gate, the one place extra visual weight is justified (DESIGN §6).
+        .overlay(Capsule().strokeBorder(confirmStroke, lineWidth: isConfirming ? 1 : 0.5))
+        .shadow(color: isConfirming ? HUDState.violet.opacity(0.35) : .black.opacity(0.25),
+                radius: isConfirming ? 10 : 8, y: 3)
+        .animation(.easeOut(duration: 0.2), value: isConfirming)
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Sotto")
         .accessibilityValue(model.state.label)
         .accessibilityHint(accessibilityHint(for: model.state))
+    }
+
+    private var isConfirming: Bool {
+        if case .confirming = model.state { return true }
+        return false
+    }
+
+    private var confirmStroke: Color {
+        isConfirming ? HUDState.violet.opacity(0.9) : .white.opacity(0.12)
     }
 
     private func accessibilityHint(for state: HUDState) -> String {

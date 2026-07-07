@@ -355,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         axCaptureTask?.cancel()
         sounds.play(.stop)
         hud.update(.transcribing)
-        setRecordingIcon(false)
+        setMenuIcon(.processing)
         setStatus("Transcribing…")
 
         // ⇧ held at stop → raw escape (skip smart processing). Read now, before the
@@ -462,6 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .empty:
             setStatus("No speech detected.")
             hud.hide()
+            setMenuIcon(.idle)
             return
         }
         // History write sits AFTER inject — off the critical paste path.
@@ -684,7 +685,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func scheduleHUDDismiss(after seconds: TimeInterval) {
         hudDismissWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.hud.hide() }
+        let work = DispatchWorkItem { [weak self] in
+            self?.hud.hide()
+            self?.setMenuIcon(.idle)
+        }
         hudDismissWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
@@ -826,11 +830,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem?.title = text
     }
 
-    private func setRecordingIcon(_ recording: Bool) {
+    /// The menu-bar icon mirrors the dictation lifecycle so state is glanceable
+    /// without the pill: idle = mic, recording = mic.fill, processing = waveform.
+    private enum MenuIcon { case idle, recording, processing }
+
+    private func setMenuIcon(_ icon: MenuIcon) {
         guard let button = statusItem?.button else { return }
-        let symbol = recording ? "mic.fill" : "mic"
+        let symbol: String
+        switch icon {
+        case .idle: symbol = "mic"
+        case .recording: symbol = "mic.fill"
+        case .processing: symbol = "waveform"
+        }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Sotto")
         button.image?.isTemplate = true
+    }
+
+    private func setRecordingIcon(_ recording: Bool) {
+        setMenuIcon(recording ? .recording : .idle)
     }
 
     // MARK: Permissions
