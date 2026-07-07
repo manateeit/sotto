@@ -24,12 +24,15 @@ struct OnboardingView: View {
     /// stays testable/preview-able without a real NSStatusItem.
     var statusItemHidden: () -> Bool
 
-    private enum Step { case permissions, guide }
+    private enum Step { case permissions, guide, verify }
 
     @State private var step: Step
     @State private var micGranted: Bool
     @State private var axTrusted: Bool
     @State private var iconHidden = false
+    /// The user's live first dictation, pasted straight into the verify field so
+    /// they watch the whole capture→transcribe→paste pipeline work on run one.
+    @State private var verifyText = ""
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(onDone: @escaping () -> Void,
@@ -50,6 +53,7 @@ struct OnboardingView: View {
             switch step {
             case .permissions: permissionsStep
             case .guide: guideStep
+            case .verify: verifyStep
             }
         }
         .padding(28)
@@ -127,7 +131,48 @@ struct OnboardingView: View {
             }
             Spacer()
             Button("Change hotkey…") { onOpenSettings() }
-            Button("Got it — start dictating") { finishGuide() }
+            Button("Try it now →") { step = .verify }
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    // MARK: Step 3 — verify the pipeline end-to-end
+
+    @ViewBuilder
+    private var verifyStep: some View {
+        Text("Try your first dictation").font(.title).bold()
+        Text("Click the box, press ⌥Space, say a sentence, then press ⌥Space again. Your words appear here — proof the whole thing works.")
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+            .font(.callout)
+
+        TextEditor(text: $verifyText)
+            .font(.body)
+            .frame(height: 120)
+            .padding(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.secondary.opacity(0.3)))
+            .overlay(alignment: .topLeading) {
+                if verifyText.isEmpty {
+                    Text("Your dictation lands here…")
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 13).padding(.vertical, 16)
+                        .allowsHitTesting(false)
+                }
+            }
+
+        if !verifyText.isEmpty {
+            Label("That came straight from your voice — you're set.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.callout)
+        }
+
+        Spacer()
+        HStack {
+            Button("Back") { step = .guide }
+            if !verifyText.isEmpty {
+                Button("Clear & retry") { verifyText = "" }
+            }
+            Spacer()
+            Button(verifyText.isEmpty ? "Skip" : "Perfect — start dictating") { finishGuide() }
                 .keyboardShortcut(.defaultAction)
         }
     }
