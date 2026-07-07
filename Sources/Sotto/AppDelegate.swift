@@ -17,7 +17,7 @@ enum CancelPolicy {
 /// Menu-bar-only orchestrator for the dictation loop:
 /// hotkey (push-to-talk or toggle) → record + HUD → SpeechAnalyzer → paste.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let hotkey = HotkeyManager()
     private let recorder = Recorder()
     private let engine: TranscriptionEngine = SpeechAnalyzerEngine()
@@ -67,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    /// The dynamically-rebuilt History submenu in the menu-bar dropdown.
+    private var historyMenu: NSMenu?
 
     /// Lifecycle of one dictation. `starting` covers the async engine/mic spin-up
     /// so a stop or cancel arriving during it can be honored. `confirmingCommand`
@@ -883,6 +885,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         undoItem.keyEquivalentModifierMask = [.command, .option]
         undoItem.target = self
         menu.addItem(undoItem)
+
+        // History submenu — favorites + last 10, each with Copy / Star, without
+        // opening Settings. Rebuilt on demand via the menu delegate.
+        let historyItem = NSMenuItem(title: "History", action: nil, keyEquivalent: "")
+        let historySubmenu = NSMenu(title: "History")
+        historySubmenu.delegate = self
+        historyItem.submenu = historySubmenu
+        historyMenu = historySubmenu
+        menu.addItem(historyItem)
+
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
@@ -911,6 +923,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func logIfStatusItemHidden() {
         guard let statusItem, !statusItem.isVisible else { return }
         NSLog("Sotto: menu bar is full — macOS is hiding Sotto's status icon. ⌥Space still works without it.")
+    }
+
+    // MARK: History submenu
+
+    /// Rebuild the History submenu just before it opens so it always reflects the
+    /// current store (favorites pinned on top, then the 10 most recent non-favorites).
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === historyMenu else { return }
+        menu.removeAllItems()
+
+        let all = Array(HistoryStore.load().reversed()) // newest first
+        let favorites = all.filter { $0.isFavorite }
+        let recent = Array(all.filter { !$0.isFavorite }.prefix(10))
+
+        guard !favorites.isEmpty || !recent.isEmpty else {
+            let empty = NSMenuItem(title: "No history yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+
+        if !favorites.isEmpty {
+            menu.addItem(historySectionHeader("Favorites"))
+            for entry in favorites { menu.addItem(historyEntryItem(entry)) }
+            menu.addItem(.separator())
+        }
+        menu.addItem(historySectionHeader("Recent"))
+        for entry in recent { menu.addItem(historyEntryItem(entry)) }
+    }
+
+    private func historySectionHeader(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    /// One history row: a star prefix if favorited, a truncated preview, and a
+    /// submenu offering Copy and Star/Unstar right there.
+    private func historyEntryItem(_ entry: HistoryEntry) -> NSMenuItem {
+        let prefix = entry.isFavorite ? "★ " : ""
+        let item = NSMenuItem(title: prefix + historyPreview(entry.finalOutput), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        let copy = NSMenuItem(title: "Copy", action: #selector(copyHistoryItem(_:)), keyEquivalent: "")
+        copy.target = self
+        copy.representedObject = entry
+        sub.addItem(copy)
+
+        let star = NSMenuItem(title: entry.isFavorite ? "Unstar" : "Star",
+                              action: #selector(toggleHistoryFavorite(_:)), keyEquivalent: "")
+        star.target = self
+        star.representedObject = entry
+        sub.addItem(star)
+
+        item.submenu = sub
+        return item
+    }
+
+    /// Single-line preview, collapsed and truncated for a menu row.
+    private func historyPreview(_ text: String) -> String {
+        let oneLine = text.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return oneLine.count > 48 ? String(oneLine.prefix(47)) + "…" : oneLine
+    }
+
+    @objc private func copyHistoryItem(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.finalOutput, forType: .string)
+        setStatus("Copied from history.")
+    }
+
+    @objc private func toggleHistoryFavorite(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? HistoryEntry else { return }
+        HistoryStore.setFavorite(id: entry.id, !entry.isFavorite)
     }
 
     /// Shared onboarding presentation: wires the "guide seen" persistence and the
