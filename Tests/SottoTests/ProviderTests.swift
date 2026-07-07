@@ -97,6 +97,15 @@ private struct FakeBackend: LLMBackend {
         #expect(result.mode == "dictate")
     }
 
+    @Test func verboseNegatingReplyDoesNotFalseTriggerTransform() async throws {
+        // A chatty model reply that merely MENTIONS "transform" while meaning the
+        // opposite must NOT overwrite the selection — the first word decides.
+        let p = LLMPostProcessor(backend: FakeBackend(reply: "This isn't a transform request, it's plain dictation."))
+        let ctx = ContextSnapshot(selectedText: "some selected text")
+        let result = try await p.process("just a note", context: ctx)
+        #expect(result.mode == "dictate") // classified dictate → cleanup, not transform
+    }
+
     @Test func transformFailureThrows() async {
         // Selection present → transform path. A failing backend must THROW
         // TransformFailed so the caller leaves the selection untouched.

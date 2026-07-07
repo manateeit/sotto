@@ -52,14 +52,17 @@ struct LLMPostProcessor: PostProcessor {
 
     private enum Intent { case dictate, transform }
 
-    /// A plain chat model can't return a constrained schema like FM, so parse the
-    /// reply defensively — anything that isn't clearly "transform" is dictation
-    /// (matches FM's unsure-→-dictate fail-safe).
+    /// A plain chat model can't return a constrained schema like FM, so demand a
+    /// single bare word and match only the FIRST word — a substring search would
+    /// misfire on a verbose reply like "this isn't a transform request" and wrongly
+    /// overwrite the selection. Anything that isn't exactly "transform" is dictation
+    /// (matches FM's unsure-→-dictate fail-safe, which never surprises the user).
     private func classify(utterance: String, selection: String) async throws -> Intent {
         let reply = try await backend.complete(
-            system: Prompts.intentInstructions,
+            system: Prompts.intentInstructions + "\n\nAnswer with exactly one word: \"transform\" or \"dictate\". No other text.",
             user: Prompts.intentPrompt(selection: selection, utterance: utterance))
-        return reply.lowercased().contains("transform") ? .transform : .dictate
+        let firstWord = reply.lowercased().split(whereSeparator: { !$0.isLetter }).first.map(String.init) ?? ""
+        return firstWord == "transform" ? .transform : .dictate
     }
 
     private func clean(_ text: String, context: ContextSnapshot) async throws -> String {

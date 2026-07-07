@@ -67,7 +67,9 @@ struct OllamaBackend: LLMBackend {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         // data(for:) is natively cancellation-aware: when withTimeout cancels the
-        // losing task, the request is actually aborted (not left running).
+        // losing task, the client stops waiting and no zombie task/connection is
+        // left running. (For a small POST the request body may already be on the
+        // wire, so this frees the wait — it is not a retract-what-was-sent control.)
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw ProviderError.badResponse((resp as? HTTPURLResponse)?.statusCode ?? -1)
