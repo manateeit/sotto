@@ -1,0 +1,66 @@
+/* Settings Window */
+"SETTINGS_WINDOW_TITLE" = "Sotto Settings";
+"TAB_GENERAL" = "General";
+"TAB_VOCABULARY" = "Vocabulary";
+"TAB_HISTORY" = "History";
+
+/* General Tab */
+"GENERAL_SHORTCUT_LABEL" = "Dictation shortcut";
+"GENERAL_SHORTCUT_HELP" = "Tap to toggle recording, or hold for push-to-talk. Hold Shift on stop to paste the raw transcript.";
+"GENERAL_RECORDING_PROMPT" = "Press a shortcut…";
+"GENERAL_SOUNDS_TOGGLE" = "Play start / stop / cancel sounds";
+"GENERAL_CLEANUP_TOGGLE" = "Smart cleanup (Apple Intelligence)";
+"GENERAL_VOICECOMMANDS_TOGGLE" = "Voice commands (say \"Sotto, ...\")";
+"GENERAL_LAUNCH_AT_LOGIN_TOGGLE" = "Launch Sotto at login";
+"GENERAL_HISTORY_TOGGLE" = "Save dictation history";
+"GENERAL_KEEP_AUDIO_TOGGLE" = "Keep audio (WAV)";
+"GENERAL_RETENTION_LABEL" = "Keep history for";
+"GENERAL_RETENTION_FOREVER" = "Forever";
+"GENERAL_RETENTION_DAYS" = "%d days";
+
+/* Vocabulary Tab */
+"VOCAB_HELP_TEXT" = "Replace known misrecognitions before cleanup. Applies in order.";
+"VOCAB_REGEX_COUNT" = "%d regex rule(s) are preserved but editable only in vocabulary.json.";
+"VOCAB_REGEX_SUPPORTED" = "Regex rules are supported in vocabulary.json directly.";
+"VOCAB_IMPORTED_COUNT" = "Imported %d rule(s)";
+"VOCAB_ADD_BUTTON" = "Add";
+"VOCAB_IMPORT_BUTTON" = "Import…";
+"VOCAB_SAVE_BUTTON" = "Save";
+"VOCAB_PLACEHOLDER_FROM" = "spoken";
+"VOCAB_PLACEHOLDER_TO" = "replacement";
+"VOCAB_IMPORT_MESSAGE" = "Import vocabulary from a competitor (JSON, CSV, or text file)";
+"VOCAB_IMPORT_PROMPT" = "Import";
+
+/* History Tab */
+"HISTORY_HELP_TEXT" = "Click an entry to copy it.";
+"HISTORY_REVEAL_BUTTON" = "Reveal in Finder";
+"HISTORY_DELETE_BUTTON" = "Delete All";
+"HISTORY_REPROCESS_BUTTON" = "Reprocess";
+"HISTORY_UNDO_BUTTON" = "Undo Last Paste";
+
+/* HUD */
+"HUD_RECORDING_STATE" = "Listening…";
+"HUD_RECORDING_HINT" = "Recording. Speak into the microphone.";
+"HUD_TRANSCRIBING_STATE" = "Transcribing…";
+"HUD_TRANSCRIBING_HINT" = "Processing your speech.";
+"HUD_DONE_STATE" = "Done";
+"HUD_DONE_HINT" = "Transcription complete. Text has been pasted.";
+"HUD_CONFIRMING_HINT" = "Voice command pending. Press Option-Space to execute or Escape to cancel.";
+
+/* Onboarding */
+"ONBOARDING_WELCOME_TITLE" = "Welcome to Sotto";
+"ONBOARDING_WELCOME_SUBTITLE" = "Private dictation for macOS";
+"ONBOARDING_PERMISSIONS_TITLE" = "Permissions";
+"ONBOARDING_MIC_PERMISSION" = "Microphone access";
+"ONBOARDING_MIC_HELP" = "Sotto needs microphone access to record your voice.";
+"ONBOARDING_A11Y_PERMISSION" = "Accessibility";
+"ONBOARDING_A11Y_HELP" = "Sotto needs Accessibility permission to paste text into any app.";
+"ONBOARDING_GUIDE_TITLE" = "How to Dictate";
+"ONBOARDING_GOT_IT_BUTTON" = "Got It";
+"ONBOARDING_QUIT_BUTTON" = "Quit";
+
+/* Menu Items */
+"MENU_SETTINGS" = "Settings…";
+"MENU_CHECK_UPDATES" = "Check for Updates…";
+"MENU_WELCOME" = "Welcome & Permissions…";
+"MENU_QUIT" = "Quit Sotto";

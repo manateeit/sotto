@@ -13,6 +13,9 @@ let package = Package(
         .executableTarget(
             name: "Sotto",
             path: "Sources/Sotto",
+            resources: [
+                .process("Localizable.strings")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
