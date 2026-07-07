@@ -84,8 +84,21 @@ if [[ -n "$UPDATE_REPO" ]]; then
   /usr/libexec/PlistBuddy -c "Add :SottoUpdateRepo string ${UPDATE_REPO}" "${APP}/Contents/Info.plist"
 fi
 
-echo "==> Ad-hoc codesigning…"
-codesign --force --deep -s - "$APP"
+# Prefer a stable signing identity so TCC (Accessibility/mic) grants survive
+# rebuilds — ad-hoc signatures change every build and drop the grant. Honors an
+# explicit SIGN_IDENTITY, else auto-detects the local "Sotto Dev" dev cert
+# (create it with scripts/dev-cert.sh), else falls back to ad-hoc.
+SIGN_ID="${SIGN_IDENTITY:-}"
+if [[ -z "$SIGN_ID" ]] && security find-identity -v -p codesigning | grep -q "Sotto Dev"; then
+  SIGN_ID="Sotto Dev"
+fi
+if [[ -n "$SIGN_ID" ]]; then
+  echo "==> Codesigning with \"${SIGN_ID}\"…"
+  codesign --force --deep -s "$SIGN_ID" "$APP"
+else
+  echo "==> Ad-hoc codesigning (grants will not survive rebuilds; see scripts/dev-cert.sh)…"
+  codesign --force --deep -s - "$APP"
+fi
 
 echo "==> Verifying signature…"
 codesign -dv "$APP"
