@@ -63,20 +63,19 @@ private struct GeneralTab: View {
                 Picker("Cleanup model", selection: $settings.modelProvider) {
                     Text("On-device (default)").tag(ModelProvider.none.rawValue)
                     Text("Local — Ollama").tag(ModelProvider.ollama.rawValue)
+                    Text("Cloud — Anthropic (your key)").tag(ModelProvider.anthropic.rawValue)
                 }
                 if settings.modelProvider == ModelProvider.ollama.rawValue {
                     TextField("Ollama model (e.g. llama3.1:8b)", text: $settings.ollamaModel)
                 }
+                if settings.modelProvider == ModelProvider.anthropic.rawValue {
+                    TextField("Model (e.g. claude-3-5-haiku-latest)", text: $settings.cloudModel)
+                    SecureField("Anthropic API key — stored in Keychain", text: anthropicKey)
+                }
             } header: {
                 Text("Cleanup model")
             } footer: {
-                if settings.modelProvider == ModelProvider.ollama.rawValue {
-                    Text("Cleanup runs on your local Ollama server at 127.0.0.1:11434 — the transcript stays on this Mac. Requires Ollama running with the model pulled.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("On-device Apple Intelligence — zero network. Choose Ollama to run a larger model locally.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                Text(cleanupModelFooter).font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
@@ -127,6 +126,32 @@ private struct GeneralTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// The Anthropic API key, bound directly to the Keychain — it never touches the
+    /// Settings object or UserDefaults. Writing it rebuilds the provider so the app
+    /// picks up the new key (Keychain has no @Published signal).
+    private var anthropicKey: Binding<String> {
+        Binding(
+            get: { KeychainStore.get(ModelProvider.anthropic.keyAccount!) ?? "" },
+            set: { newValue in
+                let account = ModelProvider.anthropic.keyAccount!
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { KeychainStore.delete(account) }
+                else { KeychainStore.set(trimmed, account: account) }
+                (NSApplication.shared.delegate as? AppDelegate)?.refreshProviderFromSettings()
+            })
+    }
+
+    private var cleanupModelFooter: String {
+        switch settings.modelProvider {
+        case ModelProvider.ollama.rawValue:
+            return "Cleanup runs on your local Ollama server at 127.0.0.1:11434 — the transcript stays on this Mac. Requires Ollama running with the model pulled."
+        case ModelProvider.anthropic.rawValue:
+            return "Cleanup runs on Anthropic using your own key. Your dictated text — and, during a transform, the selected text too — is sent to Anthropic; nothing else. Sotto stores only your key (in Keychain) and adds no logging or account. Whether this meets HIPAA/ZDR is between you and Anthropic — Sotto can't guarantee it."
+        default:
+            return "On-device Apple Intelligence — zero network. Choose Ollama for a larger local model, or Anthropic to use your own cloud key."
+        }
     }
 }
 

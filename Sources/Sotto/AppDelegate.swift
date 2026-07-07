@@ -216,9 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // provider or model. Flipping back to "none" sets llm = nil (teardown), so
         // the network path becomes unreachable again without a restart.
         settings.$modelProvider.dropFirst()
-            .sink { [weak self] _ in self?.reloadProvider(); self?.reflectReadyStatus() }
+            .sink { [weak self] _ in self?.applyProviderChange() }
             .store(in: &cancellables)
         settings.$ollamaModel.dropFirst()
+            .sink { [weak self] _ in self?.reloadProvider() }
+            .store(in: &cancellables)
+        settings.$cloudModel.dropFirst()
             .sink { [weak self] _ in self?.reloadProvider() }
             .store(in: &cancellables)
 
@@ -290,13 +293,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// With `provider == .none` (default) `llm` stays nil and nothing can egress.
     private func reloadProvider() {
         let provider = ModelProvider(rawValue: settings.modelProvider) ?? .none
-        guard let backend = ProviderFactory.make(provider: provider, ollamaModel: settings.ollamaModel) else {
+        // Cloud never activates without the one-time disclosure accepted (defense in
+        // depth: a wrongly-persisted provider can't silently start egressing).
+        if provider.isCloud && !settings.cloudDisclosureSeen { llm = nil; updateCloudIndicator(); return }
+        let keyPresent = provider.keyAccount.map { KeychainStore.get($0) != nil } ?? false
+        guard let backend = ProviderFactory.make(provider: provider, ollamaModel: settings.ollamaModel,
+                                                 cloudModel: settings.cloudModel, cloudKeyPresent: keyPresent) else {
             llm = nil
+            updateCloudIndicator()
             return
         }
         llm = LLMPostProcessor(backend: backend,
                                vocabTerms: vocabulary.hintTerms,
                                domainProfile: settings.domainProfile)
+        updateCloudIndicator()
+    }
+
+    /// Rebuild the provider from settings on demand (e.g. after the Settings key
+    /// field writes to the Keychain, which has no @Published signal).
+    func refreshProviderFromSettings() {
+        reloadProvider()
+        reflectReadyStatus()
+    }
+
+    /// Always-visible egress cue (critique B6): a "☁" on the menu-bar item whenever a
+    /// CLOUD provider is actively running cleanup, so the user sees text is leaving
+    /// the machine without opening the menu. Ollama (loopback) shows no cloud glyph.
+    private func updateCloudIndicator() {
+        let cloudActive = (ModelProvider(rawValue: settings.modelProvider)?.isCloud ?? false) && llm != nil
+        statusItem?.button?.title = cloudActive ? " ☁" : ""
+        statusItem?.button?.toolTip = cloudActive
+            ? "Sotto — ⚠︎ cloud cleanup: \(settings.modelProvider) (your key)"
+            : "Sotto — ⌥Space to dictate (tap = toggle, hold = push-to-talk)"
+    }
+
+    /// Handle a provider change from Settings: gate cloud behind the one-time
+    /// disclosure, else just rebuild.
+    private func applyProviderChange() {
+        let provider = ModelProvider(rawValue: settings.modelProvider) ?? .none
+        if provider.isCloud && !settings.cloudDisclosureSeen {
+            showCloudDisclosure()
+            return
+        }
+        reloadProvider()
+        reflectReadyStatus()
+    }
+
+    private func showCloudDisclosure() {
+        let alert = NSAlert()
+        alert.messageText = "Send cleanup to the cloud?"
+        alert.informativeText = """
+        This turns on Sotto's only outbound cloud connection. Your dictated text — \
+        and, when you dictate over a selection, the selected text too — will be sent to \
+        \(settings.modelProvider) using your own API key. Sotto adds no account, logging, \
+        or telemetry of its own. Whether this meets HIPAA/ZDR depends entirely on your \
+        agreement with the provider; Sotto cannot verify or guarantee it. The default \
+        build makes zero network calls — you're opting into this one.
+        """
+        alert.addButton(withTitle: "Enable")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            settings.cloudDisclosureSeen = true
+            reloadProvider()
+            reflectReadyStatus()
+        } else {
+            // Revert on the next runloop turn (the @Published-reentrancy fix, as in
+            // the clipboard disclosure) so declining actually leaves it on-device.
+            DispatchQueue.main.async { [weak self] in self?.settings.modelProvider = ModelProvider.none.rawValue }
+        }
     }
 
     /// The cleanup processor in force: the external model if configured, else the
@@ -325,9 +389,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func reflectReadyStatus() {
         // A configured external provider is always announced — the user must know
         // which model runs cleanup, and (for anything but on-device) where text goes.
-        if llm != nil, ModelProvider(rawValue: settings.modelProvider) == .ollama {
-            setStatus("Ready — Local model (Ollama)")
-            return
+        if llm != nil, let provider = ModelProvider(rawValue: settings.modelProvider) {
+            if provider.isCloud {
+                setStatus("Ready — ⚠︎ Cloud cleanup: \(provider.rawValue) (your key)")
+                return
+            }
+            if provider == .ollama {
+                setStatus("Ready — Local model (Ollama)")
+                return
+            }
         }
         if !settings.smartCleanupEnabled {
             setStatus("Ready — smart cleanup off")

@@ -35,6 +35,24 @@ private struct FakeBackend: LLMBackend {
         #expect(ProviderFactory.make(provider: .ollama, ollamaModel: "llama3.1:8b") != nil)
     }
 
+    @Test func cloudRequiresModelAndKey() {
+        // B7: a half-configured cloud provider must not egress.
+        #expect(ProviderFactory.make(provider: .anthropic, ollamaModel: "",
+                                     cloudModel: "claude-3-5-haiku-latest", cloudKeyPresent: false) == nil) // no key
+        #expect(ProviderFactory.make(provider: .anthropic, ollamaModel: "",
+                                     cloudModel: "", cloudKeyPresent: true) == nil)                          // no model
+        #expect(ProviderFactory.make(provider: .anthropic, ollamaModel: "",
+                                     cloudModel: "claude-3-5-haiku-latest", cloudKeyPresent: true) != nil)   // both
+    }
+
+    @Test func anthropicIsCloudOllamaIsNot() {
+        #expect(ModelProvider.anthropic.isCloud)
+        #expect(!ModelProvider.ollama.isCloud)
+        #expect(!ModelProvider.none.isCloud)
+        #expect(ModelProvider.anthropic.keyAccount == "anthropic-api-key")
+        #expect(ModelProvider.ollama.keyAccount == nil)
+    }
+
     /// B2 (critique): every network/egress marker must live ONLY in Providers.swift
     /// (opt-in models) or UpdateChecker.swift (explicit update check). This is the
     /// automatable guard that "all egress is in one greppable file" can't rot.

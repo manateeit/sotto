@@ -23,6 +23,9 @@ final class Settings: ObservableObject {
         static let domainProfile = "sotto.domainProfile"
         static let modelProvider = "sotto.modelProvider"
         static let ollamaModel = "sotto.ollamaModel"
+        static let cloudModel = "sotto.cloudModel"
+        static let cloudDisclosureSeen = "sotto.cloudDisclosureSeen"
+        // NOTE: the API key is deliberately NOT here — it lives in the Keychain.
     }
 
     private let defaults: UserDefaults
@@ -60,6 +63,10 @@ final class Settings: ObservableObject {
     @Published var modelProvider: String { didSet { defaults.set(modelProvider, forKey: Key.modelProvider) } }
     /// The Ollama model id (e.g. "llama3.1:8b"), used only when modelProvider == "ollama".
     @Published var ollamaModel: String { didSet { defaults.set(ollamaModel, forKey: Key.ollamaModel) } }
+    /// The cloud model id (e.g. "claude-3-5-haiku-latest"), used for cloud providers.
+    @Published var cloudModel: String { didSet { defaults.set(cloudModel, forKey: Key.cloudModel) } }
+    /// Whether the one-time "this is your only outbound cloud connection" disclosure ran.
+    @Published var cloudDisclosureSeen: Bool { didSet { defaults.set(cloudDisclosureSeen, forKey: Key.cloudDisclosureSeen) } }
     /// Reflects SMAppService; the didSet applies the change to the system.
     @Published var launchAtLogin: Bool { didSet { applyLaunchAtLogin() } }
     /// Transient UI feedback if a hotkey couldn't be registered (not persisted).
@@ -82,7 +89,9 @@ final class Settings: ObservableObject {
             Key.clipboardDisclosureSeen: false,
             Key.domainProfile: "",
             Key.modelProvider: ModelProvider.none.rawValue,
-            Key.ollamaModel: ""
+            Key.ollamaModel: "",
+            Key.cloudModel: "",
+            Key.cloudDisclosureSeen: false
         ])
         soundsEnabled = defaults.bool(forKey: Key.sounds)
         smartCleanupEnabled = defaults.bool(forKey: Key.smartCleanup)
@@ -99,6 +108,8 @@ final class Settings: ObservableObject {
         domainProfile = defaults.string(forKey: Key.domainProfile) ?? ""
         modelProvider = defaults.string(forKey: Key.modelProvider) ?? ModelProvider.none.rawValue
         ollamaModel = defaults.string(forKey: Key.ollamaModel) ?? ""
+        cloudModel = defaults.string(forKey: Key.cloudModel) ?? ""
+        cloudDisclosureSeen = defaults.bool(forKey: Key.cloudDisclosureSeen)
         launchAtLogin = LoginItem.isEnabled // didSet does not fire during init
     }
 

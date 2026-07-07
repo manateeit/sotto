@@ -162,7 +162,7 @@ Rough shape: ~2–4 k LOC Swift. M0 is a day-scale task; each later milestone is
 ## 7. Post-MVP roadmap (ordered)
 
 1. ✅ **Agentic voice commands** — v1 shipped (M6): spoken "Sotto, …" wake word → on-device FM parse (classify-only) → violet confirm pill → dispatch behind the `VoiceCommand` seam (open app/URL, volume, type-into-terminal). See §3. The reason the PostProcessor seam exists. Next: more command kinds, media keys, per-terminal profiles.
-2. **Provider plug-ins** — Ollama + Anthropic/OpenAI/Groq behind PostProcessor (BYO keys, off by default); Parakeet + optional cloud STT behind TranscriptionEngine.
+2. **Provider plug-ins** — ✅ cleanup providers shipped: Ollama (local) + Anthropic BYOK behind the PostProcessor seam, off by default, network-silent unless selected (§8-adjacent; see docs/PROVIDER_PLUGINS_DESIGN.md). Next: OpenAI/Groq backends (~15 lines each), and Parakeet + optional cloud STT behind TranscriptionEngine.
 3. **Realtime on-screen transcript** (SpeechAnalyzer streams natively).
 4. **Reprocess from history**, file transcription (drag audio onto menu bar icon).
 5. **Fn/Globe-key hotkey** via CGEventTap (accepting the Input Monitoring permission).
