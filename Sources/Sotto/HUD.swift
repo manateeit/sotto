@@ -87,6 +87,25 @@ struct HUDView: View {
         .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
         .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Sotto")
+        .accessibilityValue(model.state.label)
+        .accessibilityHint(accessibilityHint(for: model.state))
+    }
+
+    private func accessibilityHint(for state: HUDState) -> String {
+        switch state {
+        case .recording:
+            return "Recording. Speak into the microphone."
+        case .transcribing:
+            return "Processing your speech."
+        case .done:
+            return "Transcription complete. Text has been pasted."
+        case .error(let msg):
+            return "Error: \(msg)"
+        case .confirming:
+            return "Voice command pending. Press Option-Space to execute or Escape to cancel."
+        }
     }
 }
 
