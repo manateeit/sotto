@@ -210,11 +210,47 @@ private struct EditableRule: Identifiable {
     var replacement: String = ""
 }
 
+/// Small color-coded pill for a history entry's route (dictate / transform / raw).
+private struct RouteBadge: View {
+    let route: String
+
+    private var color: Color {
+        switch route {
+        case "transform": return .purple
+        case "raw": return .gray
+        default: return .blue
+        }
+    }
+
+    var body: some View {
+        Text(route.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(color.opacity(0.18), in: Capsule())
+            .foregroundStyle(color)
+    }
+}
+
 private struct HistoryTab: View {
     @State private var entries: [HistoryEntry] = []
     @State private var reprocessingID: String?
     @State private var reprocessResult: (raw: String, cleaned: String, route: String)?
     @State private var showReprocessAlert = false
+    @State private var query = ""
+    /// Entry ids currently showing the raw (uncleaned) transcript instead of the
+    /// cleaned output. Both are already stored on every entry.
+    @State private var showRawIDs: Set<String> = []
+
+    /// Entries after the search filter, favorites already pinned to the top by reload().
+    private var shown: [HistoryEntry] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return entries }
+        return entries.filter {
+            $0.finalOutput.lowercased().contains(q)
+                || $0.rawTranscript.lowercased().contains(q)
+                || ($0.app?.lowercased().contains(q) ?? false)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -230,7 +266,20 @@ private struct HistoryTab: View {
                     entries = []
                 }
             }
-            List(entries) { entry in
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search transcripts…", text: $query)
+                    .textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Button(action: { query = "" }) {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            List(shown) { entry in
+                let showingRaw = showRawIDs.contains(entry.id)
                 HStack(spacing: 8) {
                     Button(action: { toggleFavorite(entry) }) {
                         Image(systemName: entry.isFavorite ? "star.fill" : "star")
@@ -240,18 +289,28 @@ private struct HistoryTab: View {
                     .help(entry.isFavorite ? "Unstar" : "Star (pin to top)")
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.finalOutput).lineLimit(2)
-                        HStack {
+                        Text(showingRaw ? entry.rawTranscript : entry.finalOutput).lineLimit(2)
+                        HStack(spacing: 6) {
+                            RouteBadge(route: entry.route)
                             Text(entry.date, style: .date).font(.caption).foregroundStyle(.secondary)
                             if let app = entry.app {
                                 Text(app).font(.caption).foregroundStyle(.secondary)
                             }
-                            Text(entry.route).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { copy(entry.finalOutput) }
+                    .onTapGesture { copy(showingRaw ? entry.rawTranscript : entry.finalOutput) }
                     Spacer()
+                    // Raw ⇄ Cleaned: only meaningful when the two actually differ.
+                    if entry.rawTranscript != entry.finalOutput {
+                        Button(showingRaw ? "Cleaned" : "Raw") {
+                            if showingRaw { showRawIDs.remove(entry.id) } else { showRawIDs.insert(entry.id) }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.tint)
+                        .help("Toggle raw transcript vs cleaned output")
+                    }
                     if entry.audioFile != nil {
                         Button(action: { reprocess(entry) }) {
                             if reprocessingID == entry.id {
@@ -268,6 +327,11 @@ private struct HistoryTab: View {
                     .buttonStyle(.plain)
                     .help("Delete this entry")
                 }
+            }
+            if shown.isEmpty && !query.isEmpty {
+                Text("No transcripts match “\(query)”.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center).padding(.top, 8)
             }
         }
         .padding()
