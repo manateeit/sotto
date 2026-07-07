@@ -9,6 +9,10 @@ extension Notification.Name {
     /// global hotkey (and re-registers when capture ends).
     static let sottoHotkeyCaptureBegan = Notification.Name("SottoHotkeyCaptureBegan")
     static let sottoHotkeyCaptureEnded = Notification.Name("SottoHotkeyCaptureEnded")
+    /// Posted every time the Settings window is presented, so tabs backed by
+    /// on-disk data (History) reload — the window is cached and reused, so
+    /// `.onAppear` alone won't re-fire on reopen.
+    static let sottoSettingsDidShow = Notification.Name("SottoSettingsDidShow")
 }
 
 /// The one settings window (DESIGN.md §2). Three spartan tabs.
@@ -24,7 +28,7 @@ struct SettingsView: View {
             HistoryTab()
                 .tabItem { Label("History", systemImage: "clock") }
         }
-        .frame(width: 480, height: 420)
+        .frame(width: 500, height: 480)
     }
 }
 
@@ -34,33 +38,38 @@ private struct GeneralTab: View {
 
     var body: some View {
         Form {
-            LabeledContent("Dictation shortcut") {
-                VStack(alignment: .leading, spacing: 2) {
-                    HotkeyRecorder(settings: settings)
-                    if let error = settings.hotkeyError {
-                        Text(error).font(.caption).foregroundStyle(.red)
+            Section {
+                LabeledContent("Dictation shortcut") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        HotkeyRecorder(settings: settings)
+                        if let error = settings.hotkeyError {
+                            Text(error).font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                }
+            } footer: {
+                Text("Tap to toggle recording, or hold for push-to-talk. Hold ⇧ on stop to paste the raw transcript.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Play start / stop / cancel sounds", isOn: $settings.soundsEnabled)
+                Toggle("Smart cleanup (Apple Intelligence)", isOn: $settings.smartCleanupEnabled)
+                Toggle("Voice commands (say “Sotto, …”)", isOn: $settings.voiceCommandsEnabled)
+                Toggle("Launch Sotto at login", isOn: $settings.launchAtLogin)
+            }
+
+            Section("History") {
+                Toggle("Save dictation history", isOn: $settings.historyEnabled)
+                Toggle("Keep audio (WAV)", isOn: $settings.keepAudio)
+                Picker("Keep history for", selection: $settings.historyRetentionDays) {
+                    ForEach(retentionOptions, id: \.self) { days in
+                        Text(days == 0 ? "Forever" : "\(days) days").tag(days)
                     }
                 }
             }
-            Text("Tap to toggle recording, or hold for push-to-talk. Hold ⇧ on stop to paste the raw transcript.")
-                .font(.caption).foregroundStyle(.secondary)
-
-            Divider()
-            Toggle("Play start / stop / cancel sounds", isOn: $settings.soundsEnabled)
-            Toggle("Smart cleanup (Apple Intelligence)", isOn: $settings.smartCleanupEnabled)
-            Toggle("Voice commands (say “Sotto, …”)", isOn: $settings.voiceCommandsEnabled)
-            Toggle("Launch Sotto at login", isOn: $settings.launchAtLogin)
-
-            Divider()
-            Toggle("Save dictation history", isOn: $settings.historyEnabled)
-            Toggle("Keep audio (WAV)", isOn: $settings.keepAudio)
-            Picker("Keep history for", selection: $settings.historyRetentionDays) {
-                ForEach(retentionOptions, id: \.self) { days in
-                    Text(days == 0 ? "Forever" : "\(days) days").tag(days)
-                }
-            }
         }
-        .padding()
+        .formStyle(.grouped)
     }
 }
 
@@ -210,7 +219,8 @@ private struct HistoryTab: View {
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text("Click an entry to copy it.").font(.caption).foregroundStyle(.secondary)
+                Text("Click an entry to copy it. Star to pin it to the top.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([HistoryStore.jsonlURL])
@@ -221,7 +231,14 @@ private struct HistoryTab: View {
                 }
             }
             List(entries) { entry in
-                HStack {
+                HStack(spacing: 8) {
+                    Button(action: { toggleFavorite(entry) }) {
+                        Image(systemName: entry.isFavorite ? "star.fill" : "star")
+                            .foregroundStyle(entry.isFavorite ? Color.yellow : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(entry.isFavorite ? "Unstar" : "Star (pin to top)")
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.finalOutput).lineLimit(2)
                         HStack {
@@ -245,11 +262,19 @@ private struct HistoryTab: View {
                         }
                         .disabled(reprocessingID != nil)
                     }
+                    Button(action: { deleteEntry(entry) }) {
+                        Image(systemName: "trash").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete this entry")
                 }
             }
         }
         .padding()
-        .onAppear { entries = HistoryStore.load().reversed() }
+        .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: .sottoSettingsDidShow)) { _ in
+            reload()
+        }
         .alert("Reprocessed Transcript", isPresented: $showReprocessAlert) {
             Button("Copy Cleaned", action: {
                 if let result = reprocessResult {
@@ -274,6 +299,22 @@ private struct HistoryTab: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Newest-first, with starred entries pinned to the top (stable within groups).
+    private func reload() {
+        let all = Array(HistoryStore.load().reversed())
+        entries = all.filter { $0.isFavorite } + all.filter { !$0.isFavorite }
+    }
+
+    private func toggleFavorite(_ entry: HistoryEntry) {
+        HistoryStore.setFavorite(id: entry.id, !entry.isFavorite)
+        reload()
+    }
+
+    private func deleteEntry(_ entry: HistoryEntry) {
+        HistoryStore.delete(id: entry.id)
+        reload()
     }
 
     private func reprocess(_ entry: HistoryEntry) {

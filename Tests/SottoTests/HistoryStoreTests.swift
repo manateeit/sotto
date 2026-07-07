@@ -34,6 +34,23 @@ import Testing
         #expect(HistoryStore.decode(jsonl: jsonl).count == 1)
     }
 
+    @Test func favoriteRoundTrips() {
+        var e = entry(id: "star")
+        e.favorite = true
+        let decoded = HistoryStore.decode(jsonl: HistoryStore.encode(e)!)
+        #expect(decoded.count == 1)
+        #expect(decoded[0].isFavorite == true)
+    }
+
+    @Test func legacyEntryWithoutFavoriteKeyDecodesAsNotFavorite() {
+        // Pre-favorites entries have no `favorite` key; they must still decode.
+        let legacy = HistoryStore.encode(entry(id: "old"))! // favorite nil → key omitted
+        #expect(!legacy.contains("favorite"))
+        let decoded = HistoryStore.decode(jsonl: legacy)
+        #expect(decoded.count == 1)
+        #expect(decoded[0].isFavorite == false)
+    }
+
     @Test func retentionZeroKeepsEverything() {
         let now = Date()
         #expect(HistoryStore.isExpired(entry(daysAgo: 1000, now: now), retentionDays: 0, now: now) == false)

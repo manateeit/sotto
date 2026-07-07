@@ -17,6 +17,12 @@ struct HistoryEntry: Codable, Sendable, Identifiable {
     let engineID: String
     /// WAV filename under the audio directory, if audio was kept.
     let audioFile: String?
+    /// Starred by the user to pin it to the top of the History list. Optional so
+    /// pre-favorites entries (no key in their JSONL line) still decode.
+    var favorite: Bool?
+
+    /// Whether this entry is starred. Treats a missing flag as not-favorited.
+    var isFavorite: Bool { favorite ?? false }
 
     init(id: String = UUID().uuidString,
          date: Date = Date(),
@@ -27,7 +33,8 @@ struct HistoryEntry: Codable, Sendable, Identifiable {
          bundleID: String?,
          durationSeconds: Double,
          engineID: String,
-         audioFile: String?) {
+         audioFile: String?,
+         favorite: Bool? = nil) {
         self.id = id
         self.date = date
         self.rawTranscript = rawTranscript
@@ -38,6 +45,7 @@ struct HistoryEntry: Codable, Sendable, Identifiable {
         self.durationSeconds = durationSeconds
         self.engineID = engineID
         self.audioFile = audioFile
+        self.favorite = favorite
     }
 }
 
@@ -165,6 +173,43 @@ enum HistoryStore {
             if let file = entry.audioFile {
                 try? FileManager.default.removeItem(at: audioDirectoryURL.appendingPathComponent(file))
             }
+        }
+    }
+
+    /// Rewrite the JSONL, mapping each PARSED entry through `transform` (return nil
+    /// to drop it) while preserving unparseable lines byte-intact — same "never
+    /// destroy data we don't understand" rule as prune. ponytail: full rewrite per
+    /// mutation is O(n), fine for a retention-bounded personal history file.
+    private static func rewrite(_ transform: (HistoryEntry) -> HistoryEntry?) {
+        guard let text = try? String(contentsOf: jsonlURL, encoding: .utf8) else { return }
+        var out: [String] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let s = String(line)
+            if let entry = try? decoder.decode(HistoryEntry.self, from: Data(s.utf8)) {
+                if let mapped = transform(entry), let encoded = encode(mapped) {
+                    out.append(encoded)
+                }
+            } else {
+                out.append(s) // preserve unparseable
+            }
+        }
+        let joined = out.joined(separator: "\n")
+        try? (joined.isEmpty ? "" : joined + "\n").data(using: .utf8)?.write(to: jsonlURL)
+    }
+
+    /// Delete one entry (its JSONL line + WAV).
+    static func delete(id: String) {
+        rewrite { $0.id == id ? nil : $0 }
+        try? FileManager.default.removeItem(at: audioURL(forID: id))
+    }
+
+    /// Star / unstar one entry.
+    static func setFavorite(id: String, _ favorite: Bool) {
+        rewrite { entry in
+            guard entry.id == id else { return entry }
+            var updated = entry
+            updated.favorite = favorite
+            return updated
         }
     }
 

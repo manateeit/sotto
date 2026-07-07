@@ -775,6 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showOnboardingWindow() {
         windows.showOnboarding(
             onDone: { [weak self] in self?.settings.completedOnboardingGuide = true },
+            onOpenSettings: { [weak self] in guard let self else { return }; self.windows.showSettings(settings: self.settings) },
             statusItemHidden: { [weak self] in self?.statusItem?.isVisible == false }
         )
     }

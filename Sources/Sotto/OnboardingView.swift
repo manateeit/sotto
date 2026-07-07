@@ -17,6 +17,8 @@ enum Onboarding {
 /// no mascots or animation.
 struct OnboardingView: View {
     var onDone: () -> Void
+    /// Opens the Settings window (e.g. to change the hotkey) from the guide step.
+    var onOpenSettings: () -> Void
     /// Reports whether the menu bar is currently hiding Sotto's status icon
     /// (macOS hides overflow items when the bar is full). Injected so this view
     /// stays testable/preview-able without a real NSStatusItem.
@@ -30,8 +32,11 @@ struct OnboardingView: View {
     @State private var iconHidden = false
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    init(onDone: @escaping () -> Void, statusItemHidden: @escaping () -> Bool = { false }) {
+    init(onDone: @escaping () -> Void,
+         onOpenSettings: @escaping () -> Void = {},
+         statusItemHidden: @escaping () -> Bool = { false }) {
         self.onDone = onDone
+        self.onOpenSettings = onOpenSettings
         self.statusItemHidden = statusItemHidden
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         let ax = AXIsProcessTrusted()
@@ -121,6 +126,7 @@ struct OnboardingView: View {
                 Button("Back to permissions") { step = .permissions }
             }
             Spacer()
+            Button("Change hotkey…") { onOpenSettings() }
             Button("Got it — start dictating") { finishGuide() }
                 .keyboardShortcut(.defaultAction)
         }
@@ -166,13 +172,23 @@ struct OnboardingView: View {
     }
 
     private func requestMicrophone() {
-        AVCaptureDevice.requestAccess(for: .audio) { _ in }
-        openSettings("Privacy_Microphone")
+        // First run: the system shows an Allow/Don't-Allow dialog that grants
+        // directly. If the user already decided (denied), the system won't
+        // re-prompt, so we send them to Settings to change it manually.
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        if status == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        } else {
+            openSettings("Privacy_Microphone")
+        }
     }
 
     private func requestAccessibility() {
+        // Show the system trust prompt (this also registers Sotto in the
+        // Accessibility list). Its "Open System Settings" button is the single,
+        // user-driven way into Settings — don't also open Settings ourselves,
+        // or the user gets two dialogs at once.
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-        openSettings("Privacy_Accessibility")
     }
 
     private func openSettings(_ pane: String) {
