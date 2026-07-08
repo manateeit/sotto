@@ -1097,20 +1097,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let favorites = all.filter { $0.isFavorite }
         let recent = Array(all.filter { !$0.isFavorite }.prefix(10))
 
-        guard !favorites.isEmpty || !recent.isEmpty else {
+        if favorites.isEmpty && recent.isEmpty {
             let empty = NSMenuItem(title: "No history yet", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
-            return
+        } else {
+            if !favorites.isEmpty {
+                menu.addItem(historySectionHeader("Favorites"))
+                for entry in favorites { menu.addItem(historyEntryItem(entry)) }
+                menu.addItem(.separator())
+            }
+            menu.addItem(historySectionHeader("Recent"))
+            for entry in recent { menu.addItem(historyEntryItem(entry)) }
         }
 
-        if !favorites.isEmpty {
-            menu.addItem(historySectionHeader("Favorites"))
-            for entry in favorites { menu.addItem(historyEntryItem(entry)) }
-            menu.addItem(.separator())
-        }
-        menu.addItem(historySectionHeader("Recent"))
-        for entry in recent { menu.addItem(historyEntryItem(entry)) }
+        menu.addItem(.separator())
+        let open = NSMenuItem(title: "Open in Settings…", action: #selector(openVoiceHistorySettings), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
     }
 
     /// Clipboard history: favorites pinned on top, then the 10 most recent
@@ -1118,31 +1122,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildClipboardMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        guard settings.clipboardHistoryEnabled else {
+        if !settings.clipboardHistoryEnabled {
             let off = NSMenuItem(title: "Clipboard history is off — enable in Settings", action: nil, keyEquivalent: "")
             off.isEnabled = false
             menu.addItem(off)
-            return
+        } else {
+            let all = Array(ClipboardHistoryStore.load().reversed()) // newest first
+            let favorites = all.filter { $0.isFavorite }
+            let recent = Array(all.filter { !$0.isFavorite }.prefix(10))
+
+            if favorites.isEmpty && recent.isEmpty {
+                let empty = NSMenuItem(title: "No clips yet", action: nil, keyEquivalent: "")
+                empty.isEnabled = false
+                menu.addItem(empty)
+            } else {
+                if !favorites.isEmpty {
+                    menu.addItem(historySectionHeader("Favorites"))
+                    for entry in favorites { menu.addItem(clipboardEntryItem(entry)) }
+                    menu.addItem(.separator())
+                }
+                menu.addItem(historySectionHeader("Recent"))
+                for entry in recent { menu.addItem(clipboardEntryItem(entry)) }
+            }
         }
 
-        let all = Array(ClipboardHistoryStore.load().reversed()) // newest first
-        let favorites = all.filter { $0.isFavorite }
-        let recent = Array(all.filter { !$0.isFavorite }.prefix(10))
-
-        guard !favorites.isEmpty || !recent.isEmpty else {
-            let empty = NSMenuItem(title: "No clips yet", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return
-        }
-
-        if !favorites.isEmpty {
-            menu.addItem(historySectionHeader("Favorites"))
-            for entry in favorites { menu.addItem(clipboardEntryItem(entry)) }
-            menu.addItem(.separator())
-        }
-        menu.addItem(historySectionHeader("Recent"))
-        for entry in recent { menu.addItem(clipboardEntryItem(entry)) }
+        menu.addItem(.separator())
+        let open = NSMenuItem(title: "Open in Settings…", action: #selector(openClipboardSettings), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
     }
 
     /// One clipboard row: a star prefix if favorited, a truncated preview, and a
@@ -1179,6 +1186,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleClipboardFavorite(_ sender: NSMenuItem) {
         guard let entry = sender.representedObject as? ClipboardEntry else { return }
         ClipboardHistoryStore.setFavorite(id: entry.id, !entry.isFavorite)
+    }
+
+    @objc private func openClipboardSettings() { openHistorySettings(source: .clipboard) }
+    @objc private func openVoiceHistorySettings() { openHistorySettings(source: .voice) }
+
+    /// Open Settings straight to the History tab with the given Voice/Clipboard side.
+    private func openHistorySettings(source: HistorySource) {
+        guard phase == .idle else { setStatus("Finish dictating first — then open Settings."); return }
+        windows.showSettings(settings: settings, tab: .history, source: source)
     }
 
     /// Put text on the clipboard as a Sotto-originated write, so the clipboard
@@ -1321,7 +1337,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(openSettings)
             || menuItem.action == #selector(openPermissions)
-            || menuItem.action == #selector(checkForUpdates) {
+            || menuItem.action == #selector(checkForUpdates)
+            || menuItem.action == #selector(openClipboardSettings)
+            || menuItem.action == #selector(openVoiceHistorySettings) {
             return phase == .idle
         }
         if menuItem.action == #selector(undoLastPaste) {

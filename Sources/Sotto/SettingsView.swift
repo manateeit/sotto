@@ -13,22 +13,40 @@ extension Notification.Name {
     /// on-disk data (History) reload — the window is cached and reused, so
     /// `.onAppear` alone won't re-fire on reopen.
     static let sottoSettingsDidShow = Notification.Name("SottoSettingsDidShow")
+    /// Posted to jump the Settings window to a specific tab (and, for History, a
+    /// specific Voice/Clipboard source) — e.g. from the menu-bar submenus.
+    static let sottoSelectSettingsTab = Notification.Name("SottoSelectSettingsTab")
 }
+
+/// The three Settings tabs, tagged so a notification can select one directly.
+enum SettingsTab: Hashable { case general, vocabulary, history }
 
 /// The one settings window (DESIGN.md §2). Three spartan tabs.
 struct SettingsView: View {
     @ObservedObject var settings: Settings
+    @State private var tab: SettingsTab = .general
+    /// Owned here (not in HistoryTab) so a menu jump can set it from the always-
+    /// mounted parent — the History subview needn't be mounted when the notification
+    /// fires; it just reads the binding on its next render.
+    @State private var historySource: HistorySource = .voice
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             GeneralTab(settings: settings)
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             VocabularyTab()
                 .tabItem { Label("Vocabulary", systemImage: "textformat") }
-            HistoryTab()
+                .tag(SettingsTab.vocabulary)
+            HistoryTab(source: $historySource)
                 .tabItem { Label("History", systemImage: "clock") }
+                .tag(SettingsTab.history)
         }
         .frame(width: 500, height: 480)
+        .onReceive(NotificationCenter.default.publisher(for: .sottoSelectSettingsTab)) { note in
+            if let requested = note.userInfo?["tab"] as? SettingsTab { tab = requested }
+            if let requested = note.userInfo?["source"] as? HistorySource { historySource = requested }
+        }
     }
 }
 
@@ -313,10 +331,10 @@ private struct RouteBadge: View {
     }
 }
 
-private enum HistorySource: Hashable { case voice, clipboard }
+enum HistorySource: Hashable { case voice, clipboard }
 
 private struct HistoryTab: View {
-    @State private var source: HistorySource = .voice
+    @Binding var source: HistorySource
     @State private var entries: [HistoryEntry] = []
     @State private var reprocessingID: String?
     @State private var reprocessResult: (raw: String, cleaned: String, route: String)?

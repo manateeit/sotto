@@ -9,7 +9,9 @@ final class AppWindows: NSObject, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
 
-    func showSettings(settings: Settings) {
+    /// Show the Settings window. Pass `tab` (and, for `.history`, a `source`) to jump
+    /// straight there; omit `tab` to leave the cached window on its last-used tab.
+    func showSettings(settings: Settings, tab: SettingsTab? = nil, source: HistorySource? = nil) {
         if settingsWindow == nil {
             settingsWindow = makeWindow(title: "Sotto Settings", content: SettingsView(settings: settings))
         }
@@ -17,6 +19,15 @@ final class AppWindows: NSObject, NSWindowDelegate {
         // The window is cached, so data-backed tabs (History) must reload on
         // every show — `.onAppear` won't re-fire on a reused window.
         NotificationCenter.default.post(name: .sottoSettingsDidShow, object: nil)
+
+        guard let tab else { return }
+        var info: [AnyHashable: Any] = ["tab": tab]
+        if let source { info["source"] = source }
+        // Post next runloop turn: on a first-ever open the SwiftUI view hasn't
+        // subscribed to the notification yet when we return from present().
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .sottoSelectSettingsTab, object: nil, userInfo: info)
+        }
     }
 
     func showOnboarding(onDone: @escaping () -> Void,
