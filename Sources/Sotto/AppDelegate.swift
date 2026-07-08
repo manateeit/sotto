@@ -1018,7 +1018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Sotto")
+            button.image = NSImage(systemSymbolName: "music.mic", accessibilityDescription: "Sotto")
             button.image?.isTemplate = true
             button.toolTip = "Sotto — ⌥Space to dictate (tap = toggle, hold = push-to-talk)"
         }
@@ -1353,15 +1353,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The menu-bar icon mirrors the dictation lifecycle so state is glanceable
-    /// without the pill: idle = mic, recording = mic.fill, processing = waveform.
+    /// without the pill: idle = old-style mic, recording = filled mic badge,
+    /// processing = waveform.
     private enum MenuIcon { case idle, recording, processing }
 
     private func setMenuIcon(_ icon: MenuIcon) {
         guard let button = statusItem?.button else { return }
         let symbol: String
         switch icon {
-        case .idle: symbol = "mic"
-        case .recording: symbol = "mic.fill"
+        case .idle: symbol = "music.mic"
+        case .recording: symbol = "music.mic.circle.fill"
         case .processing: symbol = "waveform"
         }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Sotto")
