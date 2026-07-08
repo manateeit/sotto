@@ -121,7 +121,7 @@ private struct GeneralTab: View {
             Section {
                 Toggle("Clipboard history", isOn: $settings.clipboardHistoryEnabled)
             } footer: {
-                Text("Save what you copy (⌘C) to a separate, local-only history — never sent anywhere. Skips items marked secret by password managers; keeps the last \(ClipboardHistoryStore.maxCount) clips.")
+                Text("Save what you copy (⌘C) to a separate, local-only history — never sent anywhere. Skips items marked secret by password managers; keeps the last \(ClipboardHistoryStore.maxCount) clips, plus any you star.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -492,9 +492,9 @@ private struct HistoryTab: View {
     }
 }
 
-/// The Clipboard side of the History tab. Plain text clips, newest-first, with
-/// search + click-to-copy + delete. No star/reprocess/Raw-Cleaned — those are
-/// voice-only. Reads the SEPARATE ClipboardHistoryStore.
+/// The Clipboard side of the History tab. Plain text clips, favorites pinned on
+/// top, with search + click-to-copy + star + delete. No reprocess/Raw-Cleaned —
+/// those are voice-only. Reads the SEPARATE ClipboardHistoryStore.
 private struct ClipboardHistoryList: View {
     @State private var entries: [ClipboardEntry] = []
     @State private var query = ""
@@ -510,7 +510,7 @@ private struct ClipboardHistoryList: View {
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text("Click a clip to copy it. Local-only; passwords skipped.")
+                Text("Click a clip to copy it. Star to pin it. Local-only; passwords skipped.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Delete All", role: .destructive) {
@@ -537,6 +537,13 @@ private struct ClipboardHistoryList: View {
             }
             List(shown) { entry in
                 HStack(spacing: 8) {
+                    Button(action: { toggleFavorite(entry) }) {
+                        Image(systemName: entry.isFavorite ? "star.fill" : "star")
+                            .foregroundStyle(entry.isFavorite ? Color.yellow : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(entry.isFavorite ? "Unstar" : "Star (pin to top)")
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.text).lineLimit(2)
                         HStack(spacing: 6) {
@@ -561,11 +568,20 @@ private struct ClipboardHistoryList: View {
         .onReceive(NotificationCenter.default.publisher(for: .sottoSettingsDidShow)) { _ in reload() }
     }
 
-    private func reload() { entries = Array(ClipboardHistoryStore.load().reversed()) }
+    /// Newest-first, with starred clips pinned to the top (stable within groups).
+    private func reload() {
+        let all = Array(ClipboardHistoryStore.load().reversed())
+        entries = all.filter { $0.isFavorite } + all.filter { !$0.isFavorite }
+    }
 
     private func copy(_ text: String) {
         // Suppressed so re-copying a clip isn't re-captured as a new entry.
         (NSApplication.shared.delegate as? AppDelegate)?.copyToPasteboardSuppressed(text)
+    }
+
+    private func toggleFavorite(_ entry: ClipboardEntry) {
+        ClipboardHistoryStore.setFavorite(id: entry.id, !entry.isFavorite)
+        reload()
     }
 
     private func deleteEntry(_ entry: ClipboardEntry) {

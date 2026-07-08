@@ -183,10 +183,13 @@ a second app. Kept honest to the identity:
   (a token pasted from a plain note) *can't* be detected — a one-time first-run
   disclosure says so plainly. Not full at-rest encryption (that needs key
   management that fights "radically simpler"); instead: file `0600`, excluded from
-  backup/Spotlight, **count-capped at 50** (a small breach payload, not a 30-day log).
+  backup/Spotlight, **auto-capture count-capped at 50** (a small breach payload, not
+  a 30-day log). Clips you explicitly **star are exempt from the cap** and kept until
+  you unstar or delete them — a deliberate, per-item opt-out, disclosed on first run.
 - **Self-paste loop:** a shared `ClipboardWriteGuard` fingerprints every pasteboard
   changeCount Sotto itself produces (paste, restore, copy-from-history) so the
   monitor never records Sotto's own output as a "user copy". Bounded, one-shot.
-- **Surfaced** in the menu-bar "Clipboard" submenu (flat click-to-copy) and a
-  Voice/Clipboard segmented control in Settings › History. No favorites/reprocess
-  on clips — those are voice-only.
+- **Surfaced** in the menu-bar "Clipboard" submenu (favorites pinned on top, each
+  row offers Copy + Star/Unstar) and a Voice/Clipboard segmented control in
+  Settings › History. Favorites/stars work like voice history; reprocess is
+  voice-only.

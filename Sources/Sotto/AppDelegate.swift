@@ -1113,7 +1113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for entry in recent { menu.addItem(historyEntryItem(entry)) }
     }
 
-    /// Clipboard history: a flat click-to-copy list of the 10 most recent clips.
+    /// Clipboard history: favorites pinned on top, then the 10 most recent
+    /// non-favorites. Mirrors the voice-history submenu (Copy + Star/Unstar per row).
     private func rebuildClipboardMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
@@ -1124,20 +1125,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        let recent = Array(ClipboardHistoryStore.load().reversed().prefix(10))
-        guard !recent.isEmpty else {
+        let all = Array(ClipboardHistoryStore.load().reversed()) // newest first
+        let favorites = all.filter { $0.isFavorite }
+        let recent = Array(all.filter { !$0.isFavorite }.prefix(10))
+
+        guard !favorites.isEmpty || !recent.isEmpty else {
             let empty = NSMenuItem(title: "No clips yet", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
             return
         }
-        for entry in recent {
-            let item = NSMenuItem(title: historyPreview(entry.text),
-                                  action: #selector(copyClipboardItem(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = entry
-            menu.addItem(item)
+
+        if !favorites.isEmpty {
+            menu.addItem(historySectionHeader("Favorites"))
+            for entry in favorites { menu.addItem(clipboardEntryItem(entry)) }
+            menu.addItem(.separator())
         }
+        menu.addItem(historySectionHeader("Recent"))
+        for entry in recent { menu.addItem(clipboardEntryItem(entry)) }
+    }
+
+    /// One clipboard row: a star prefix if favorited, a truncated preview, and a
+    /// submenu offering Copy and Star/Unstar right there.
+    private func clipboardEntryItem(_ entry: ClipboardEntry) -> NSMenuItem {
+        let prefix = entry.isFavorite ? "★ " : ""
+        let item = NSMenuItem(title: prefix + historyPreview(entry.text), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        let copy = NSMenuItem(title: "Copy", action: #selector(copyClipboardItem(_:)), keyEquivalent: "")
+        copy.target = self
+        copy.representedObject = entry
+        sub.addItem(copy)
+
+        let star = NSMenuItem(title: entry.isFavorite ? "Unstar" : "Star",
+                              action: #selector(toggleClipboardFavorite(_:)), keyEquivalent: "")
+        star.target = self
+        star.representedObject = entry
+        sub.addItem(star)
+
+        item.submenu = sub
+        return item
     }
 
     @objc private func copyClipboardItem(_ sender: NSMenuItem) {
@@ -1147,6 +1174,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Stamp so re-copying a clip isn't re-captured as a fresh entry.
         clipboardWriteGuard.markOwnWrite(changeCount: NSPasteboard.general.changeCount)
         setStatus("Copied from clipboard.")
+    }
+
+    @objc private func toggleClipboardFavorite(_ sender: NSMenuItem) {
+        guard let entry = sender.representedObject as? ClipboardEntry else { return }
+        ClipboardHistoryStore.setFavorite(id: entry.id, !entry.isFavorite)
     }
 
     /// Put text on the clipboard as a Sotto-originated write, so the clipboard
@@ -1178,8 +1210,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Sotto will save the text of things you copy to a private, on-device history — \
         separate from your voice history and never sent anywhere. It skips items marked \
         secret by password managers, but some passwords and tokens aren't marked and \
-        would be stored. Only the last \(ClipboardHistoryStore.maxCount) clips are kept, \
-        and you can clear them anytime.
+        would be stored. Only the last \(ClipboardHistoryStore.maxCount) clips are kept — \
+        except ones you star, which stay until you unstar or delete them. You can clear \
+        them anytime.
         """
         alert.addButton(withTitle: "Turn On")
         alert.addButton(withTitle: "Cancel")

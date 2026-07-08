@@ -3,8 +3,8 @@ import Foundation
 import os
 
 /// One captured clipboard copy. Deliberately minimal and PLAIN TEXT ONLY — no
-/// dictation fields (rawTranscript/route/audio), no favorites. Physically separate
-/// from `HistoryEntry` so voice history and clipboard history can never mix.
+/// dictation fields (rawTranscript/route/audio). Physically separate from
+/// `HistoryEntry` so voice history and clipboard history can never mix.
 struct ClipboardEntry: Codable, Sendable, Identifiable {
     let id: String
     let date: Date
@@ -13,14 +13,21 @@ struct ClipboardEntry: Codable, Sendable, Identifiable {
     /// Frontmost app at capture time, for attribution.
     let sourceApp: String?
     let bundleID: String?
+    /// Starred by the user to pin it to the top and exempt it from the count cap.
+    /// Optional so pre-favorites clips (no key in their JSONL line) still decode.
+    var favorite: Bool?
+
+    /// Whether this clip is starred. Treats a missing flag as not-favorited.
+    var isFavorite: Bool { favorite ?? false }
 
     init(id: String = UUID().uuidString, date: Date = Date(),
-         text: String, sourceApp: String?, bundleID: String?) {
+         text: String, sourceApp: String?, bundleID: String?, favorite: Bool? = nil) {
         self.id = id
         self.date = date
         self.text = text
         self.sourceApp = sourceApp
         self.bundleID = bundleID
+        self.favorite = favorite
     }
 }
 
@@ -31,7 +38,8 @@ struct ClipboardEntry: Codable, Sendable, Identifiable {
 /// everything you copy is a bigger liability than your own dictations, so it stays
 /// small. File is created 0600 and excluded from backup/Spotlight.
 enum ClipboardHistoryStore {
-    /// Hard cap on retained clips. Not user-configurable — keeps the secret-payload
+    /// Cap on auto-captured (non-favorite) clips. Starred clips are exempt and kept
+    /// until unstarred/deleted. Not user-configurable — keeps the secret-payload
     /// small and the settings surface minimal.
     static let maxCount = 50
     /// Skip anything longer than this (a giant paste shouldn't bloat the log).
@@ -95,19 +103,31 @@ enum ClipboardHistoryStore {
 
     // MARK: Bounding
 
-    /// Pure: keep only the newest `max` lines (append order == chronological).
+    /// Pure: enforce the retention cap on raw JSONL lines. Favorites and any line we
+    /// can't parse are always kept (a star means "keep this"; never destroy data we
+    /// don't understand). Only parseable non-favorites count toward `max`, and the
+    /// OLDEST of those are dropped first. Original line order is preserved.
     static func capLines(_ lines: [String], max: Int) -> [String] {
-        guard max > 0, lines.count > max else { return lines }
-        return Array(lines.suffix(max))
+        guard max > 0 else { return lines }
+        // Indices of droppable lines (parseable, non-favorite) in chronological order.
+        let droppable = lines.enumerated().compactMap { i, line -> Int? in
+            guard let e = try? decoder.decode(ClipboardEntry.self, from: Data(line.utf8)) else { return nil }
+            return e.isFavorite ? nil : i
+        }
+        guard droppable.count > max else { return lines }
+        let dropSet = Set(droppable.prefix(droppable.count - max)) // oldest non-favorites
+        return lines.enumerated().filter { !dropSet.contains($0.offset) }.map(\.element)
     }
 
-    /// Trim the file to the newest `maxCount` lines. No-op unless it's over cap.
+    /// Trim the file so at most `maxCount` non-favorite clips remain (favorites are
+    /// exempt). No-op unless the cap actually drops a line.
     static func enforceCap() {
         guard let text = try? String(contentsOf: jsonlURL, encoding: .utf8) else { return }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
-        guard lines.count > maxCount else { return }
-        let kept = capLines(lines, max: maxCount).joined(separator: "\n")
-        try? (kept.isEmpty ? "" : kept + "\n").data(using: .utf8)?.write(to: jsonlURL, options: .atomic)
+        let kept = capLines(lines, max: maxCount)
+        guard kept.count < lines.count else { return }
+        let joined = kept.joined(separator: "\n")
+        try? (joined.isEmpty ? "" : joined + "\n").data(using: .utf8)?.write(to: jsonlURL, options: .atomic)
     }
 
     // MARK: Mutation (mirrors HistoryStore, preserving unparseable lines)
@@ -129,6 +149,16 @@ enum ClipboardHistoryStore {
 
     static func delete(id: String) {
         rewrite { $0.id == id ? nil : $0 }
+    }
+
+    /// Star / unstar one clip. Starred clips pin to the top and survive the cap.
+    static func setFavorite(id: String, _ favorite: Bool) {
+        rewrite { entry in
+            guard entry.id == id else { return entry }
+            var updated = entry
+            updated.favorite = favorite
+            return updated
+        }
     }
 
     static func deleteAll() {

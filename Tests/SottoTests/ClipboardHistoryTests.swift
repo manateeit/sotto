@@ -5,9 +5,15 @@ import Testing
 /// Pure logic for the separate clipboard-history store, the concealed-type skip
 /// predicate, and the self-paste suppression guard.
 @Suite struct ClipboardHistoryTests {
-    private func entry(_ id: String = "x", _ text: String = "hello") -> ClipboardEntry {
+    private func entry(_ id: String = "x", _ text: String = "hello", favorite: Bool = false) -> ClipboardEntry {
         ClipboardEntry(id: id, date: Date(timeIntervalSince1970: 1000),
-                       text: text, sourceApp: "Notes", bundleID: "com.apple.Notes")
+                       text: text, sourceApp: "Notes", bundleID: "com.apple.Notes",
+                       favorite: favorite ? true : nil)
+    }
+
+    /// Decode a capped result back to ids, for order-preserving assertions.
+    private func ids(_ lines: [String]) -> [String] {
+        ClipboardHistoryStore.decode(jsonl: lines.joined(separator: "\n")).map(\.id)
     }
 
     // MARK: store
@@ -26,14 +32,35 @@ import Testing
         #expect(ClipboardHistoryStore.decode(jsonl: good + "\nnot json\n{bad}\n").count == 1)
     }
 
-    @Test func capKeepsNewestOnly() {
-        let lines = (1...10).map { "\($0)" }
-        #expect(ClipboardHistoryStore.capLines(lines, max: 3) == ["8", "9", "10"])
+    @Test func capKeepsNewestNonFavorites() {
+        let lines = (1...10).map { ClipboardHistoryStore.encode(entry("\($0)"))! }
+        #expect(ids(ClipboardHistoryStore.capLines(lines, max: 3)) == ["8", "9", "10"])
+    }
+
+    @Test func capExemptsFavorites() {
+        // 5 clips, #2 starred; a cap of 2 keeps the star in place plus the 2 newest
+        // non-favorites, dropping the oldest non-favorites (1, 3).
+        let lines = (1...5).map { ClipboardHistoryStore.encode(entry("\($0)", favorite: $0 == 2))! }
+        #expect(ids(ClipboardHistoryStore.capLines(lines, max: 2)) == ["2", "4", "5"])
+    }
+
+    @Test func capPreservesUnparseableLines() {
+        let lines = [ClipboardHistoryStore.encode(entry("a"))!, "not json",
+                     ClipboardHistoryStore.encode(entry("b"))!]
+        let kept = ClipboardHistoryStore.capLines(lines, max: 1)
+        #expect(kept.contains("not json"))     // junk preserved, never counted toward cap
+        #expect(ids(kept) == ["b"])            // oldest parseable non-favorite dropped
     }
 
     @Test func capNoOpUnderLimit() {
-        let lines = ["1", "2"]
+        let lines = (1...2).map { ClipboardHistoryStore.encode(entry("\($0)"))! }
         #expect(ClipboardHistoryStore.capLines(lines, max: 50) == lines)
+    }
+
+    @Test func setFavoriteAndMissingKeyDecodesUnfavorited() {
+        // A clip encoded without the favorite key decodes as not-favorited.
+        #expect(ClipboardHistoryStore.decode(jsonl: ClipboardHistoryStore.encode(entry("a"))!)[0].isFavorite == false)
+        #expect(ClipboardHistoryStore.decode(jsonl: ClipboardHistoryStore.encode(entry("b", favorite: true))!)[0].isFavorite)
     }
 
     // MARK: concealed-type skip (password managers, transient)
